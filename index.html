@@ -175,23 +175,23 @@
 
   .reset{
     position:absolute;
-    right:clamp(24px,4vw,64px);
-    bottom:clamp(24px,4.4vh,54px);
+    left:clamp(24px,4vw,64px);
+    bottom:calc(clamp(24px,4.4vh,54px) + 64px);
     display:block;
     padding:0;
     border:0;background:none;
     pointer-events:auto;cursor:pointer;
-    text-align:right;
+    text-align:left;
     color:#2a382e;
     font-family:inherit;
-    padding:10px 2px 10px 26px;
+    padding:10px 26px 10px 2px;
     isolation:isolate;
     text-shadow:0 1px 5px rgba(240,243,234,.95),0 0 15px rgba(240,243,234,.5);
     transition:color .35s ease;
   }
   .reset::before{
-    content:"";position:absolute;inset:-16px -22px -18px -34px;
-    background:radial-gradient(58% 58% at 60% 50%, rgba(239,242,232,.50), rgba(239,242,232,0) 78%);
+    content:"";position:absolute;inset:-16px -34px -18px -22px;
+    background:radial-gradient(58% 58% at 40% 50%, rgba(239,242,232,.50), rgba(239,242,232,0) 78%);
     z-index:-1;pointer-events:none;
   }
   .reset .cn{
@@ -206,7 +206,7 @@
   .reset::after{
     content:"";display:block;height:1px;margin-top:8px;
     background:rgba(45,57,47,.45);
-    transform-origin:right center;
+    transform-origin:left center;
     transition:transform .45s ease,opacity .45s ease;
   }
   .reset:hover{color:#223028;}
@@ -482,7 +482,7 @@
     .counts{gap:13px;margin-top:6px;}
     .counts span{font-size:10px;}
     .counts b{font-size:18px;margin-left:4px;}
-    .reset{right:16px;bottom:18px;padding:8px 2px 8px 20px;}
+    .reset{left:16px;bottom:150px;padding:8px 20px 8px 2px;}
     .reset .cn{font-size:12px;letter-spacing:.16em;}
     .reset .en{font-size:7.5px;margin-top:4px;}
     .gesture{right:16px;bottom:88px;padding:4px 2px 4px 20px;}
@@ -534,7 +534,7 @@
     <span class="en">Reset</span>
   </button>
 
-  <button class="gesture" id="gesture" type="button" aria-label="手势控制：开掌移动蜜蜂，食指指点光点看细节，握拳停下，反复开合手掌让植物生长，双手聚拢让蜂群抱团，双手分开让蜂群四散">
+  <button class="gesture" id="gesture" type="button" aria-label="手势控制：开掌移动蜜蜂，食指指点光点看细节，握拳停下，反复开合手掌让植物生长，双手聚拢让蜂群抱团，双手分开让蜂群四散，双手同时握拳重置画卷">
     <span class="cn">手势控制</span>
     <span class="en">Gesture · Camera</span>
   </button>
@@ -859,6 +859,8 @@
   const DEFAULT_PROGRESS = 0;
   let plateScale = 1, plateW = 1, plateH = 1;
   let camX = 0, camY = 0, prevCamX = 0, camVel = 0;
+  /* after a reset the paper stays at its beginning until the hand moves */
+  let scrollFreeze = null;
   let scrollProgress = DEFAULT_PROGRESS;
   let seasonFloat = 0;
   let lastProgress = DEFAULT_PROGRESS;
@@ -871,10 +873,10 @@
   /* the scroll answers the hand at once, but the paper only ever travels at
      a slow walk: one stretch of the painting takes a couple of seconds to
      pass, so nothing races by unseen */
-  const CAM_SLOW = .22;
+  const CAM_SLOW = .085;
   /* the paper never starts with a jolt: it gathers speed over a third of a
      second and lets go just as gently when it reaches where the hand is */
-  const CAM_ACCEL = .5;
+  const CAM_ACCEL = .2;
   /* at the far east of the scroll the last season stands alone: the
      stretch that used to lie under its western edge thins away */
   function endK(){
@@ -5252,6 +5254,7 @@
     lastFlap:0, lastPlant:0, aimLight:-1, aimDone:-1, aimSince:0,
     lastClick:0, lastSeen:0, mouseAt:0,
     spread:1, spreadTarget:1, ratio:2.2, twoAt:0,
+    bothFistAt:0, bothFistFired:false, lastReset:0, noPlant:0,
     lastVideoTime:-1, lastDetect:0,
     landmarker:null, stream:null, video:null
   };
@@ -5380,6 +5383,12 @@
     return dTip > dPip * 1.10;
   }
 
+  /* how many of the four fingers are actually held up */
+  function fingersUp(lm){
+    return (fingerUp(lm, 8, 6) ? 1 : 0) + (fingerUp(lm, 12, 10) ? 1 : 0) +
+           (fingerUp(lm, 16, 14) ? 1 : 0) + (fingerUp(lm, 20, 18) ? 1 : 0);
+  }
+
   function palmOf(lm){
     let x = 0, y = 0;
     for(const i of [0, 5, 9, 13, 17]){ x += lm[i].x; y += lm[i].y; }
@@ -5407,6 +5416,28 @@
       return;
     }
 
+    /* two closed hands, held steady for a moment, send the scroll back to
+       its beginning — the same as pressing 重置画卷 */
+    if(hands.length === 2){
+      const nA = fingersUp(hands[0]), nB = fingersUp(hands[1]);
+      if(nA === 0 && nB === 0){
+        if(!gesture.bothFistAt) gesture.bothFistAt = now;
+        if(!gesture.bothFistFired && now - gesture.bothFistAt > 900 &&
+           now - gesture.lastReset > 3200){
+          gesture.bothFistFired = true;
+          gesture.lastReset = now;
+          gesture.noPlant = now + 2600;
+          resetPainting();
+        }
+      }else{
+        gesture.bothFistAt = 0;
+        gesture.bothFistFired = false;
+      }
+    }else{
+      gesture.bothFistAt = 0;
+      gesture.bothFistFired = false;
+    }
+
     /* with two hands, keep steering with the palm nearest where the bee
        already is, so the pointer never hops between hands */
     let lm = hands[0];
@@ -5431,9 +5462,8 @@
       gesture.ratio += (2.2 - gesture.ratio) * .08;
     }
 
-    const idx = fingerUp(lm, 8, 6), mid = fingerUp(lm, 12, 10);
-    const rng = fingerUp(lm, 16, 14), lit = fingerUp(lm, 20, 18);
-    const n = (idx ? 1 : 0) + (mid ? 1 : 0) + (rng ? 1 : 0) + (lit ? 1 : 0);
+    const idx = fingerUp(lm, 8, 6);
+    const n = fingersUp(lm);
     let cls = 'other';
     if(n >= 4) cls = 'open';
     else if(n === 0) cls = 'fist';
@@ -5484,7 +5514,8 @@
     if((prev === 'fist' && p === 'open') || (prev === 'open' && p === 'fist')){
       const gap = now - gesture.lastFlap;
       gesture.lastFlap = now;
-      if(gap < 1800) plantFromHand(now);
+      /* opening the hands after a two-fist reset is not a planting beat */
+      if(gap < 1800 && now >= gesture.noPlant) plantFromHand(now);
     }
   }
 
@@ -5558,7 +5589,9 @@
     if(gesture.on) stopGesture(); else startGesture();
   });
 
-  resetEl.addEventListener('click', () => {
+  /* resetting the scroll: the ground is cleared and the paper runs back to
+     its beginning, so the four seasons can be walked again from the start */
+  function resetPainting(){
     const now = performance.now();
     for(const pl of plants){
       if(!pl.dying) pl.dying = now + Math.random()*160;
@@ -5571,7 +5604,13 @@
     plantLayerDirty = true;
     clearReveal();
     hintEl.classList.remove('hide');
-  });
+    setSeason(0);
+    /* the hand that asked for the reset is still where it was: the paper
+       stays home until it truly moves again */
+    scrollFreeze = { x: pointer.x, y: pointer.y };
+  }
+
+  resetEl.addEventListener('click', resetPainting);
 
   /* ------------------------------------------------------------
      Seasons turn with the scroll position, never with a click
@@ -5717,13 +5756,14 @@
     const left = clamp(p.x, 96, Math.max(96, cssW - 96));
     /* the words never run into the little gesture plate in the corner:
        if they would, they move to the quiet air above the light instead */
-    if(gestureEl){
-      const g = gestureEl.getBoundingClientRect();
-      const overlaps = left + w/2 + 14 > g.left && left - w/2 - 14 < g.right &&
-                       top + hh + 10 > g.top && top - 10 < g.bottom;
-      if(overlaps){
-        top = clamp(p.y - off - hh, 80, Math.max(80, cssH - hh - 72));
-      }
+    const hits = el => {
+      if(!el) return false;
+      const r = el.getBoundingClientRect();
+      return left + w/2 + 14 > r.left && left - w/2 - 14 < r.right &&
+             top + hh + 10 > r.top && top - 10 < r.bottom;
+    };
+    if(hits(gestureEl) || hits(resetEl)){
+      top = clamp(p.y - off - hh, 80, Math.max(80, cssH - hh - 72));
     }
     glowcapEl.style.left = Math.round(left) + 'px';
     glowcapEl.style.top = Math.round(top) + 'px';
@@ -6623,7 +6663,11 @@
 
   function updateCamera(dt){
     const hold = shimHot >= 0 || noteOpen >= 0;
-    if(!hold && pointer.inCanvas){
+    if(scrollFreeze && (Math.abs(pointer.x - scrollFreeze.x) > 26 ||
+                        Math.abs(pointer.y - scrollFreeze.y) > 26)){
+      scrollFreeze = null;
+    }
+    if(!hold && pointer.inCanvas && !scrollFreeze){
       lastProgress = clamp(pointer.x / cssW, 0, 1);
     }
     const maxCam = camMax();
