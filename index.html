@@ -4475,19 +4475,47 @@
   setGuide('mouse');
 
   /* ------------------------------------------------------------
-     Ambient sound — a low drone, a breath of wind and the odd
-     far-off bird, all made here so the page stays a single file
+     Sound — 《秦岭 · 生生》, a solo upright piano piece written
+     for the scroll: 62 bpm, eight bars that flow into themselves,
+     and nothing else in the room. Synthesised here so the page
+     stays one file and can start the moment it is opened.
   ------------------------------------------------------------ */
   const soundEl = document.getElementById('sound');
   const soundEnEl = document.getElementById('soundEn');
-  const sound = { ctx:null, master:null, voices:[], started:false, off:false, chordAt:0, birdAt:0, noteAt:0, chord:0 };
-  /* a few soft bells on the pentatonic ground, now and then */
-  const SOUND_NOTES = [440.00, 523.25, 587.33, 659.25, 783.99];
-  const SOUND_CHORDS = [
-    [110.00, 164.81, 220.00, 329.63],
-    [110.00, 146.83, 220.00, 293.66],
-    [ 98.00, 146.83, 196.00, 293.66],
-    [110.00, 164.81, 246.94, 329.63]
+  const sound = { ctx:null, master:null, bus:null, started:false, off:false, nextBar:0, bar:0 };
+  const mtof = n => 440 * Math.pow(2, (n - 69) / 12);
+  /* partial, amplitude, relative decay — a warm, round upright */
+  const PIANO_PARTIALS = [
+    [1, 1.00, 1.00], [2, .38, .76], [3, .18, .62], [4, .09, .50],
+    [5, .045, .40], [6, .022, .32], [8, .009, .24]
+  ];
+  const PIANO_BEAT = 60 / 62;
+  const PIANO_BAR = PIANO_BEAT * 4;
+  const PIANO_CHORDS = [
+    [48, 55, 62, 64, 67, 71],   /* Cmaj9   */
+    [45, 52, 60, 64, 67, 72],   /* Am9     */
+    [41, 48, 57, 60, 64, 67],   /* Fmaj9   */
+    [43, 50, 55, 59, 62, 67],   /* G6      */
+    [48, 55, 60, 64, 67, 72],   /* C       */
+    [45, 52, 57, 60, 64, 69],   /* Am      */
+    [50, 57, 60, 62, 65, 69],   /* Dm9     */
+    [43, 50, 55, 60, 65, 67]    /* G7sus4  */
+  ];
+  const PIANO_ARP = [
+    [0, 2, 3, 4, 3, 2, 1, 2],
+    [0, 3, 2, 4, 3, 5, 4, 2],
+    [0, 2, 4, 3, 5, 3, 2, 1]
+  ];
+  /* beat, midi, beats held, velocity — one plain line, no leaps */
+  const PIANO_MEL = [
+    [[0, 76, 1.5, .30], [1.5, 79, .5, .26], [2, 76, 1.5, .25]],
+    [[0, 74, 1.5, .30], [1.5, 72, .5, .26], [2, 74, 2, .24]],
+    [[0, 72, 1.5, .28], [1.5, 74, .5, .24], [2, 76, 2, .26]],
+    [[0, 74, 2, .28], [2, 79, 1, .22]],
+    [[0, 79, 1.5, .28], [1.5, 81, .5, .24], [2, 79, 1.5, .25]],
+    [[0, 76, 1.5, .28], [1.5, 74, .5, .24], [2, 72, 2, .24]],
+    [[0, 74, 1.5, .27], [1.5, 72, .5, .23], [2, 69, 2, .24]],
+    [[0, 67, 1.5, .26], [1.5, 72, .5, .23], [2, 74, 2, .24]]
   ];
 
   function buildSound(){
@@ -4495,54 +4523,37 @@
     if(!AC) return false;
     let ctx;
     try{ ctx = new AC(); }catch(err){ return false; }
+
     const master = ctx.createGain();
     master.gain.value = 0;
-    master.connect(ctx.destination);
+    /* no bottom rumble, no brittle top end */
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 55;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 7200;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -18; comp.knee.value = 9; comp.ratio.value = 2;
+    comp.attack.value = .03; comp.release.value = .4;
+    master.connect(hp); hp.connect(lp); lp.connect(comp); comp.connect(ctx.destination);
+    const an = ctx.createAnalyser(); an.fftSize = 2048; comp.connect(an); sound.analyser = an;
 
-    /* wind: soft brown noise breathing through a low pass */
-    const len = Math.floor(ctx.sampleRate * 5);
-    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-    const ch = buf.getChannelData(0);
-    let last = 0;
-    for(let i = 0; i < len; i++){
-      last = last * .965 + (Math.random() * 2 - 1) * .035;
-      ch[i] = last * 2.6;
-    }
-    const noise = ctx.createBufferSource();
-    noise.buffer = buf; noise.loop = true;
-    const nf = ctx.createBiquadFilter();
-    nf.type = 'lowpass'; nf.frequency.value = 470; nf.Q.value = .5;
-    const ng = ctx.createGain(); ng.gain.value = .045;
-    noise.connect(nf); nf.connect(ng); ng.connect(master);
-    const swing = ctx.createOscillator(); swing.frequency.value = .05;
-    const swingAmt = ctx.createGain(); swingAmt.gain.value = 170;
-    swing.connect(swingAmt); swingAmt.connect(nf.frequency);
-    noise.start(); swing.start();
+    /* a small wooden room: two short damped delays under the dry note */
+    const bus = ctx.createGain(); bus.gain.value = 1;
+    const d1 = ctx.createDelay(1); d1.delayTime.value = .043;
+    const d2 = ctx.createDelay(1); d2.delayTime.value = .061;
+    const damp = ctx.createBiquadFilter(); damp.type = 'lowpass'; damp.frequency.value = 2000;
+    const fb = ctx.createGain(); fb.gain.value = .3;
+    const wet = ctx.createGain(); wet.gain.value = .28;
+    bus.connect(d1); d1.connect(damp); damp.connect(fb); fb.connect(d1);
+    d1.connect(wet); bus.connect(d2); d2.connect(wet);
+    wet.connect(master);
+    const dry = ctx.createGain(); dry.gain.value = .94;
+    bus.connect(dry); dry.connect(master);
 
-    /* drone: four soft voices drifting between breath-chords */
-    const pad = ctx.createGain(); pad.gain.value = .05;
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1200;
-    pad.connect(lp); lp.connect(master);
-    for(let i = 0; i < 4; i++){
-      const o = ctx.createOscillator();
-      o.type = i === 1 ? 'triangle' : 'sine';
-      o.frequency.value = SOUND_CHORDS[0][i];
-      o.detune.value = i % 2 ? 5 : -5;
-      const g = ctx.createGain();
-      g.gain.value = i === 3 ? .10 : .30;
-      o.connect(g); g.connect(pad);
-      const lfo = ctx.createOscillator(); lfo.frequency.value = .03 + i * .011;
-      const la = ctx.createGain(); la.gain.value = i === 3 ? .04 : .13;
-      lfo.connect(la); la.connect(g.gain); lfo.start();
-      o.start();
-      sound.voices.push(o);
-    }
     sound.ctx = ctx;
     sound.master = master;
+    sound.bus = bus;
     sound.started = true;
-    sound.chordAt = performance.now() + 11000;
-    sound.birdAt = performance.now() + 6000;
-    sound.noteAt = performance.now() + 9000;
+    sound.nextBar = ctx.currentTime + .12;
+    sound.bar = 0;
     return true;
   }
 
@@ -4555,8 +4566,11 @@
 
   function startSound(){
     if(!sound.started && !buildSound()) return;
-    if(sound.ctx.state === 'suspended') sound.ctx.resume();
-    soundLevel(sound.off ? 0 : .5);
+    if(sound.ctx.state === 'suspended'){
+      const p = sound.ctx.resume();
+      if(p && p.catch) p.catch(() => {});
+    }
+    soundLevel(sound.off ? 0 : .66);
   }
 
   function setSoundOff(off){
@@ -4569,91 +4583,123 @@
     if(sound.off) soundLevel(0); else startSound();
   }
 
-  function chirp(){
+  /* one piano note: a doubled fundamental, soft partials above it,
+     an upright's quiet attack, and a gentle roll-off as it dies away */
+  function pianoNote(midi, when, vel, dur, pan){
+    const ctx = sound.ctx;
+    if(!ctx) return;
+    const freq = mtof(midi);
+    const t = Math.max(when, ctx.currentTime + .015);
+    const out = ctx.createGain();
+    out.gain.value = .30 * vel;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    const cut = Math.min(4200, 2000 + 1300 * vel + (midi - 60) * 14);
+    lp.frequency.setValueAtTime(cut, t);
+    lp.frequency.exponentialRampToValueAtTime(1100 + 500 * vel, t + Math.min(3, dur));
+    let tail = lp;
+    if(ctx.createStereoPanner){
+      const p = ctx.createStereoPanner();
+      p.pan.value = pan || 0;
+      lp.connect(p); tail = p;
+    }
+    tail.connect(sound.bus);
+    for(const [n, amp, dec] of PIANO_PARTIALS){
+      const f = freq * n * Math.sqrt(1 + .00035 * n * n);
+      const cents = (n === 1 ? 2.4 : 1.6);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(.000001, t);
+      g.gain.linearRampToValueAtTime(amp, t + .009);
+      g.gain.exponentialRampToValueAtTime(amp * .55, t + .5);
+      g.gain.exponentialRampToValueAtTime(.000001, t + dur * dec);
+      const sides = n === 1 ? [-1, 1] : [0];
+      for(const side of sides){
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.value = f;
+        if(side) o.detune.value = side * cents;
+        const half = ctx.createGain(); half.gain.value = sides.length > 1 ? .5 : 1;
+        o.connect(half); half.connect(g);
+        o.start(t); o.stop(t + dur * dec + .06);
+      }
+      g.connect(out);
+    }
+    out.connect(lp);
+  }
+
+  /* eight bars of broken chords under a plain, unhurried tune */
+  function scheduleBar(bar, at){
+    const i = bar % PIANO_CHORDS.length;
+    const ch = PIANO_CHORDS[i];
+    const pat = PIANO_ARP[i % PIANO_ARP.length];
+    pianoNote(ch[0], at, .24, PIANO_BAR * 1.25, -.10);
+    for(let k = 0; k < 8; k++){
+      /* start above the bass so the bar does not thump on its first beat */
+      const n = ch[pat[(k + 1) % pat.length]];
+      pianoNote(n, at + k * PIANO_BEAT / 2 + (Math.random() - .5) * .01,
+                .20 + Math.random() * .06, 2.5 + Math.random() * .9, (n - 60) / 70);
+    }
+    for(const [beat, n, held, vel] of PIANO_MEL[i]){
+      pianoNote(n, at + beat * PIANO_BEAT + (Math.random() - .5) * .008, vel,
+                Math.max(2.2, held * PIANO_BEAT * 1.5), .07);
+    }
+  }
+
+  function soundTick(){
     const ctx = sound.ctx;
     if(!ctx) return;
     const t = ctx.currentTime;
-    const o = ctx.createOscillator(); o.type = 'sine';
-    const g = ctx.createGain();
-    const base = 1350 + Math.random() * 900;
-    o.frequency.setValueAtTime(base, t);
-    o.frequency.exponentialRampToValueAtTime(base * 1.45, t + .07);
-    o.frequency.exponentialRampToValueAtTime(base * .92, t + .17);
-    g.gain.setValueAtTime(.0001, t);
-    g.gain.exponentialRampToValueAtTime(.03, t + .025);
-    g.gain.exponentialRampToValueAtTime(.0001, t + .24);
-    if(ctx.createStereoPanner){
-      const p = ctx.createStereoPanner();
-      p.pan.value = Math.random() * 1.5 - .75;
-      o.connect(g); g.connect(p); p.connect(sound.master);
-    }else{
-      o.connect(g); g.connect(sound.master);
-    }
-    o.start(t); o.stop(t + .3);
-  }
-
-  /* a single soft bell, now and then, on the pentatonic ground */
-  function pluck(){
-    const ctx = sound.ctx;
-    if(!ctx) return;
-    const t = ctx.currentTime + .02;
-    const o = ctx.createOscillator(); o.type = 'triangle';
-    o.frequency.setValueAtTime(SOUND_NOTES[(Math.random() * SOUND_NOTES.length) | 0], t);
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
-    lp.frequency.setValueAtTime(2600, t);
-    lp.frequency.exponentialRampToValueAtTime(900, t + 2.2);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(.0001, t);
-    g.gain.exponentialRampToValueAtTime(.035, t + .06);
-    g.gain.exponentialRampToValueAtTime(.0001, t + 2.8);
-    o.connect(lp); lp.connect(g);
-    if(ctx.createStereoPanner){
-      const p = ctx.createStereoPanner();
-      p.pan.value = Math.random() * .8 - .4;
-      g.connect(p); p.connect(sound.master);
-    }else g.connect(sound.master);
-    o.start(t); o.stop(t + 3);
-  }
-
-  function soundTick(now){
-    if(!sound.ctx || sound.off) return;
-    if(now > sound.chordAt){
-      sound.chordAt = now + 15000 + Math.random() * 9000;
-      sound.chord = (sound.chord + 1) % SOUND_CHORDS.length;
-      const t = sound.ctx.currentTime;
-      SOUND_CHORDS[sound.chord].forEach((f, i) => {
-        if(sound.voices[i]) sound.voices[i].frequency.setTargetAtTime(f, t, 1.6);
-      });
-    }
-    if(now > sound.birdAt){
-      sound.birdAt = now + 9000 + Math.random() * 16000;
-      chirp();
-      if(Math.random() < .4) setTimeout(chirp, 420 + Math.random() * 300);
-    }
-    if(now > sound.noteAt){
-      sound.noteAt = now + 5200 + Math.random() * 9000;
-      pluck();
-      if(Math.random() < .28) setTimeout(pluck, 520 + Math.random() * 220);
+    if(!sound.off && ctx.state === 'running'){
+      if(sound.nextBar < t) sound.nextBar = t + .12;
+      while(sound.nextBar < t + 1.5){
+        scheduleBar(sound.bar++, sound.nextBar);
+        sound.nextBar += PIANO_BAR;
+      }
     }
   }
-  setInterval(() => soundTick(performance.now()), 1200);
+  setInterval(soundTick, 240);
 
   if(soundEl) soundEl.addEventListener('click', () => setSoundOff(!sound.off));
 
-  /* browsers only let sound start after a gesture: the first touch of the
-     page wakes it, unless the visitor has already asked for silence */
-  function wakeSound(e){
-    if(e && e.target && e.target.closest && e.target.closest('#sound')) return;
-    ['pointerdown','keydown','touchstart'].forEach(t => window.removeEventListener(t, wakeSound, true));
-    if(!sound.off) startSound();
+  /* the piece is meant to begin the moment the page is opened; where the
+     browser still demands a first gesture, the first touch starts it */
+  const WAKE_EVENTS = ['pointerdown','pointerup','keydown','keyup','touchstart','touchend','click','pointermove','wheel'];
+  let wakeTry = 0;
+  function unwake(){
+    WAKE_EVENTS.forEach(t => window.removeEventListener(t, wakeSound, true));
   }
-  ['pointerdown','keydown','touchstart'].forEach(t => window.addEventListener(t, wakeSound, true));
+  function wakeSound(e){
+    if(!sound.ctx) return;
+    if(sound.ctx.state === 'running'){ unwake(); return; }
+    const kind = e && e.type;
+    /* a pointer merely passing over the paper cannot unlock sound; keep
+       those attempts rare so the click that follows is not crowded out */
+    if(kind === 'pointermove' || kind === 'wheel'){
+      const now = performance.now();
+      if(now - wakeTry < 600) return;
+      wakeTry = now;
+    }
+    try{
+      const p = sound.ctx.resume();
+      if(p && p.then) p.then(() => {
+        if(sound.ctx && sound.ctx.state === 'running') unwake();
+      }, () => {});
+    }catch(err){}
+  }
+  WAKE_EVENTS.forEach(t => window.addEventListener(t, wakeSound, true));
+
+  /* ask for sound now; if the browser says not yet, the first touch will */
+  startSound();
 
   document.addEventListener('visibilitychange', () => {
     if(!sound.ctx) return;
     if(document.hidden) sound.ctx.suspend();
-    else if(!sound.off) sound.ctx.resume();
+    else if(!sound.off) sound.ctx.resume().catch(() => {});
   });
+
+  /* leaving the page takes the music with it */
+  window.addEventListener('pagehide', () => { if(sound.ctx) sound.ctx.suspend(); });
+  window.addEventListener('pageshow', () => { if(sound.ctx && !sound.off) sound.ctx.resume().catch(() => {}); });
 
   const resetEl = document.getElementById('reset');
   const seasonsEl = document.getElementById('seasons');
@@ -7211,8 +7257,17 @@
     lens: () => ({ t:+lensT.toFixed(3), i:lensIdx, want:lensWant, r:Math.round(lensRadius()) }),
     vis: (i) => +shimmerVis(i).toFixed(3),
     guide: (k) => setGuide(k),
-    sound: () => ({ state: sound.ctx ? sound.ctx.state : 'none', off: sound.off,
-                    gain: sound.master ? +sound.master.gain.value.toFixed(3) : 0 }),
+    sound: () => {
+      let peak = 0;
+      if(sound.analyser){
+        const a = new Float32Array(sound.analyser.fftSize);
+        sound.analyser.getFloatTimeDomainData(a);
+        for(let i = 0; i < a.length; i++) peak = Math.max(peak, Math.abs(a[i]));
+      }
+      return { state: sound.ctx ? sound.ctx.state : 'none', off: sound.off,
+               gain: sound.master ? +sound.master.gain.value.toFixed(3) : 0,
+               peak: +peak.toFixed(3) };
+    },
     copy: (i) => STORY[i]
   };
 })();
