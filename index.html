@@ -143,6 +143,26 @@
     margin-top:9px;
     font-size:9px;letter-spacing:.18em;color:#6c776c;
   }
+
+  .guide{
+    margin-top:14px;padding-top:12px;
+    border-top:1px solid rgba(45,57,47,.14);
+    font-size:9.5px;letter-spacing:.11em;
+    color:#4f5c53;
+    text-shadow:0 0 5px rgba(241,244,236,.95),0 1px 3px rgba(241,244,236,.85);
+  }
+  .guide p{margin:0;line-height:1.95;white-space:pre-line;}
+  .guide-cap{
+    display:flex;justify-content:flex-end;align-items:center;gap:9px;
+    font-size:8px;letter-spacing:.28em;color:var(--muted);
+    text-transform:uppercase;margin-bottom:7px;
+    transition:color .4s ease;
+  }
+  .guide-cap i{
+    width:4px;height:4px;border-radius:50%;background:var(--gold);
+    opacity:.8;display:inline-block;
+  }
+  .guide.hand .guide-cap{color:#4f6254;}
   .readout.idle{opacity:.86;}
 
   .record{
@@ -254,6 +274,47 @@
   .gesture.busy{opacity:.55;}
   .gesture.live{color:#2f4a39;}
   .gesture.live::after{background:rgba(62,102,74,.48);}
+
+  .sound{
+    position:absolute;
+    right:clamp(24px,4vw,64px);
+    bottom:calc(clamp(24px,4.4vh,54px) + 142px);
+    display:block;
+    padding:0;
+    border:0;background:none;
+    pointer-events:auto;cursor:pointer;
+    text-align:right;
+    color:#2a382e;
+    font-family:inherit;
+    padding:6px 2px 6px 26px;
+    isolation:isolate;
+    text-shadow:0 1px 5px rgba(240,243,234,.95),0 0 15px rgba(240,243,234,.5);
+    transition:color .35s ease, opacity .5s ease;
+  }
+  .sound::before{
+    content:"";position:absolute;inset:-12px -22px -14px -34px;
+    background:radial-gradient(58% 58% at 60% 50%, rgba(239,242,232,.46), rgba(239,242,232,0) 78%);
+    z-index:-1;pointer-events:none;
+  }
+  .sound .cn{
+    display:block;
+    font-family:var(--serif);
+    font-size:12.5px;letter-spacing:.2em;
+  }
+  .sound .en{
+    display:block;margin-top:4px;
+    font-size:8px;letter-spacing:.28em;color:#58665a;
+  }
+  .sound::after{
+    content:"";display:block;height:1px;margin-top:6px;
+    background:rgba(45,57,47,.28);
+    transform-origin:right center;
+    transition:transform .45s ease,opacity .45s ease;
+  }
+  .sound:hover{color:#223028;}
+  .sound:hover::after{transform:scaleX(.58);opacity:.8;}
+  .sound.off{color:#6d7a6e;opacity:.72;}
+  .sound.off::after{background:rgba(45,57,47,.16);}
 
   .gvid{
     position:absolute;
@@ -474,7 +535,7 @@
     .readout.idle .alt{font-size:19px;letter-spacing:.01em;}
     .readout .alt .unit{font-size:10px;margin-left:4px;}
     .zone{font-size:11px;letter-spacing:.07em;margin-top:5px;}
-    .readout .hr,.readout .species,.readout .note{display:none;}
+    .readout .hr,.readout .species,.readout .note,.readout .guide{display:none;}
     .hint{left:18px;right:auto;bottom:118px;transform:none;
       font-size:8px;letter-spacing:.1em;}
     .record{left:18px;bottom:20px;}
@@ -488,13 +549,16 @@
     .gesture{right:16px;bottom:88px;padding:4px 2px 4px 20px;}
     .gesture .cn{font-size:11px;letter-spacing:.14em;}
     .gesture .en{font-size:7.5px;}
+    .sound{right:16px;bottom:150px;padding:4px 2px 4px 20px;}
+    .sound .cn{font-size:11px;letter-spacing:.14em;}
+    .sound .en{font-size:7.5px;}
     .gvid{left:16px;width:86px;height:64px;bottom:96px;}
     .note{width:calc(100vw - 36px);}
   }
   @media (max-height:620px){
     .brand .rule{display:none;}
     .sub{display:none;}
-    .readout .note{display:none;}
+    .readout .note,.readout .guide{display:none;}
   }
 </style>
 </head>
@@ -517,7 +581,10 @@
     <div class="zone" id="zoneName">秦岭垂直生态带谱</div>
     <div class="hr"></div>
     <div class="species" id="speciesList">落叶阔叶林 · 针阔混交林 · 针叶林 · 灌丛草甸 · 高山草甸</div>
-    <div class="note">移动光标 · 颜色扩散 · 蜂群随行</div>
+    <div class="guide" id="guide">
+      <div class="guide-cap"><span id="guideCap">鼠标互动</span><i></i><span id="guideCapEn">Mouse</span></div>
+      <p id="guideText"></p>
+    </div>
   </aside>
 
   <footer class="record">
@@ -537,6 +604,11 @@
   <button class="gesture" id="gesture" type="button" aria-label="手势控制：开掌移动蜜蜂，食指指点光点看细节，握拳停下，反复开合手掌让植物生长，双手聚拢让蜂群抱团，双手分开让蜂群四散，双手同时握拳重置画卷">
     <span class="cn">手势控制</span>
     <span class="en">Gesture · Camera</span>
+  </button>
+
+  <button class="sound" id="sound" type="button" aria-pressed="true" aria-label="环境声：舒缓的背景音乐，点击可以静音">
+    <span class="cn">环境声</span>
+    <span class="en" id="soundEn">Sound</span>
   </button>
 
   <video class="gvid" id="gvid" muted playsinline aria-hidden="true"></video>
@@ -4381,6 +4453,208 @@
   if(window.matchMedia && window.matchMedia('(max-width:560px)').matches){
     hintEl.textContent = '左右滑动流转四季 · 轻触光点细看';
   }
+  /* the little guide beside the readout speaks the language of whatever
+     hand is steering: a mouse, or an open palm in front of the camera */
+  const guideEl = document.getElementById('guide');
+  const guideCapEl = document.getElementById('guideCap');
+  const guideCapEnEl = document.getElementById('guideCapEn');
+  const guideTextEl = document.getElementById('guideText');
+  const GUIDE_COPY = {
+    mouse: ['鼠标互动', 'Mouse',
+      '移动鼠标 · 展开四季长卷\n移到光点旁 · 放大细看\n点击光点 · 读一段故事'],
+    hand: ['手势互动', 'Hand',
+      '开掌移动 · 握拳停下\n食指 · 点开光点\n开合手掌 · 植物生长\n双手聚拢/分开 · 蜂群聚散\n双手握拳 · 重置画卷']
+  };
+  function setGuide(kind){
+    const c = GUIDE_COPY[kind] || GUIDE_COPY.mouse;
+    if(guideCapEl) guideCapEl.textContent = c[0];
+    if(guideCapEnEl) guideCapEnEl.textContent = c[1];
+    if(guideTextEl) guideTextEl.textContent = c[2];
+    if(guideEl) guideEl.classList.toggle('hand', kind === 'hand');
+  }
+  setGuide('mouse');
+
+  /* ------------------------------------------------------------
+     Ambient sound — a low drone, a breath of wind and the odd
+     far-off bird, all made here so the page stays a single file
+  ------------------------------------------------------------ */
+  const soundEl = document.getElementById('sound');
+  const soundEnEl = document.getElementById('soundEn');
+  const sound = { ctx:null, master:null, voices:[], started:false, off:false, chordAt:0, birdAt:0, noteAt:0, chord:0 };
+  /* a few soft bells on the pentatonic ground, now and then */
+  const SOUND_NOTES = [440.00, 523.25, 587.33, 659.25, 783.99];
+  const SOUND_CHORDS = [
+    [110.00, 164.81, 220.00, 329.63],
+    [110.00, 146.83, 220.00, 293.66],
+    [ 98.00, 146.83, 196.00, 293.66],
+    [110.00, 164.81, 246.94, 329.63]
+  ];
+
+  function buildSound(){
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC) return false;
+    let ctx;
+    try{ ctx = new AC(); }catch(err){ return false; }
+    const master = ctx.createGain();
+    master.gain.value = 0;
+    master.connect(ctx.destination);
+
+    /* wind: soft brown noise breathing through a low pass */
+    const len = Math.floor(ctx.sampleRate * 5);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const ch = buf.getChannelData(0);
+    let last = 0;
+    for(let i = 0; i < len; i++){
+      last = last * .965 + (Math.random() * 2 - 1) * .035;
+      ch[i] = last * 2.6;
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buf; noise.loop = true;
+    const nf = ctx.createBiquadFilter();
+    nf.type = 'lowpass'; nf.frequency.value = 470; nf.Q.value = .5;
+    const ng = ctx.createGain(); ng.gain.value = .045;
+    noise.connect(nf); nf.connect(ng); ng.connect(master);
+    const swing = ctx.createOscillator(); swing.frequency.value = .05;
+    const swingAmt = ctx.createGain(); swingAmt.gain.value = 170;
+    swing.connect(swingAmt); swingAmt.connect(nf.frequency);
+    noise.start(); swing.start();
+
+    /* drone: four soft voices drifting between breath-chords */
+    const pad = ctx.createGain(); pad.gain.value = .05;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1200;
+    pad.connect(lp); lp.connect(master);
+    for(let i = 0; i < 4; i++){
+      const o = ctx.createOscillator();
+      o.type = i === 1 ? 'triangle' : 'sine';
+      o.frequency.value = SOUND_CHORDS[0][i];
+      o.detune.value = i % 2 ? 5 : -5;
+      const g = ctx.createGain();
+      g.gain.value = i === 3 ? .10 : .30;
+      o.connect(g); g.connect(pad);
+      const lfo = ctx.createOscillator(); lfo.frequency.value = .03 + i * .011;
+      const la = ctx.createGain(); la.gain.value = i === 3 ? .04 : .13;
+      lfo.connect(la); la.connect(g.gain); lfo.start();
+      o.start();
+      sound.voices.push(o);
+    }
+    sound.ctx = ctx;
+    sound.master = master;
+    sound.started = true;
+    sound.chordAt = performance.now() + 11000;
+    sound.birdAt = performance.now() + 6000;
+    sound.noteAt = performance.now() + 9000;
+    return true;
+  }
+
+  function soundLevel(v){
+    if(!sound.ctx) return;
+    const t = sound.ctx.currentTime;
+    sound.master.gain.cancelScheduledValues(t);
+    sound.master.gain.setTargetAtTime(v, t, 1.4);
+  }
+
+  function startSound(){
+    if(!sound.started && !buildSound()) return;
+    if(sound.ctx.state === 'suspended') sound.ctx.resume();
+    soundLevel(sound.off ? 0 : .5);
+  }
+
+  function setSoundOff(off){
+    sound.off = !!off;
+    if(soundEl){
+      soundEl.classList.toggle('off', sound.off);
+      soundEl.setAttribute('aria-pressed', String(!sound.off));
+    }
+    if(soundEnEl) soundEnEl.textContent = sound.off ? 'Muted' : 'Sound';
+    if(sound.off) soundLevel(0); else startSound();
+  }
+
+  function chirp(){
+    const ctx = sound.ctx;
+    if(!ctx) return;
+    const t = ctx.currentTime;
+    const o = ctx.createOscillator(); o.type = 'sine';
+    const g = ctx.createGain();
+    const base = 1350 + Math.random() * 900;
+    o.frequency.setValueAtTime(base, t);
+    o.frequency.exponentialRampToValueAtTime(base * 1.45, t + .07);
+    o.frequency.exponentialRampToValueAtTime(base * .92, t + .17);
+    g.gain.setValueAtTime(.0001, t);
+    g.gain.exponentialRampToValueAtTime(.03, t + .025);
+    g.gain.exponentialRampToValueAtTime(.0001, t + .24);
+    if(ctx.createStereoPanner){
+      const p = ctx.createStereoPanner();
+      p.pan.value = Math.random() * 1.5 - .75;
+      o.connect(g); g.connect(p); p.connect(sound.master);
+    }else{
+      o.connect(g); g.connect(sound.master);
+    }
+    o.start(t); o.stop(t + .3);
+  }
+
+  /* a single soft bell, now and then, on the pentatonic ground */
+  function pluck(){
+    const ctx = sound.ctx;
+    if(!ctx) return;
+    const t = ctx.currentTime + .02;
+    const o = ctx.createOscillator(); o.type = 'triangle';
+    o.frequency.setValueAtTime(SOUND_NOTES[(Math.random() * SOUND_NOTES.length) | 0], t);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(2600, t);
+    lp.frequency.exponentialRampToValueAtTime(900, t + 2.2);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(.0001, t);
+    g.gain.exponentialRampToValueAtTime(.035, t + .06);
+    g.gain.exponentialRampToValueAtTime(.0001, t + 2.8);
+    o.connect(lp); lp.connect(g);
+    if(ctx.createStereoPanner){
+      const p = ctx.createStereoPanner();
+      p.pan.value = Math.random() * .8 - .4;
+      g.connect(p); p.connect(sound.master);
+    }else g.connect(sound.master);
+    o.start(t); o.stop(t + 3);
+  }
+
+  function soundTick(now){
+    if(!sound.ctx || sound.off) return;
+    if(now > sound.chordAt){
+      sound.chordAt = now + 15000 + Math.random() * 9000;
+      sound.chord = (sound.chord + 1) % SOUND_CHORDS.length;
+      const t = sound.ctx.currentTime;
+      SOUND_CHORDS[sound.chord].forEach((f, i) => {
+        if(sound.voices[i]) sound.voices[i].frequency.setTargetAtTime(f, t, 1.6);
+      });
+    }
+    if(now > sound.birdAt){
+      sound.birdAt = now + 9000 + Math.random() * 16000;
+      chirp();
+      if(Math.random() < .4) setTimeout(chirp, 420 + Math.random() * 300);
+    }
+    if(now > sound.noteAt){
+      sound.noteAt = now + 5200 + Math.random() * 9000;
+      pluck();
+      if(Math.random() < .28) setTimeout(pluck, 520 + Math.random() * 220);
+    }
+  }
+  setInterval(() => soundTick(performance.now()), 1200);
+
+  if(soundEl) soundEl.addEventListener('click', () => setSoundOff(!sound.off));
+
+  /* browsers only let sound start after a gesture: the first touch of the
+     page wakes it, unless the visitor has already asked for silence */
+  function wakeSound(e){
+    if(e && e.target && e.target.closest && e.target.closest('#sound')) return;
+    ['pointerdown','keydown','touchstart'].forEach(t => window.removeEventListener(t, wakeSound, true));
+    if(!sound.off) startSound();
+  }
+  ['pointerdown','keydown','touchstart'].forEach(t => window.addEventListener(t, wakeSound, true));
+
+  document.addEventListener('visibilitychange', () => {
+    if(!sound.ctx) return;
+    if(document.hidden) sound.ctx.suspend();
+    else if(!sound.off) sound.ctx.resume();
+  });
+
   const resetEl = document.getElementById('reset');
   const seasonsEl = document.getElementById('seasons');
   const seasonDotEl = document.getElementById('seasonDot');
@@ -5335,6 +5609,7 @@
       gesture.mouseAt = performance.now();
       gvidEl.classList.add('on');
       setGestureLabel('手势 · 已开启', 'Palm · Fist · Two Hands');
+      setGuide('hand');
       requestAnimationFrame(gestureTick);
     }catch(err){
       releaseStream();
@@ -5359,6 +5634,7 @@
     gesture.busy = false;
     gestureEl.classList.remove('busy');
     setGestureLabel('手势控制', 'Gesture · Camera');
+    setGuide('mouse');
   }
 
   function gestureTick(){
@@ -5762,7 +6038,7 @@
       return left + w/2 + 14 > r.left && left - w/2 - 14 < r.right &&
              top + hh + 10 > r.top && top - 10 < r.bottom;
     };
-    if(hits(gestureEl) || hits(resetEl)){
+    if(hits(gestureEl) || hits(resetEl) || hits(soundEl)){
       top = clamp(p.y - off - hh, 80, Math.max(80, cssH - hh - 72));
     }
     glowcapEl.style.left = Math.round(left) + 'px';
@@ -6934,6 +7210,9 @@
     shimmer: (i) => { const p = shimmerAt(i); return [Math.round(p.x), Math.round(p.y)]; },
     lens: () => ({ t:+lensT.toFixed(3), i:lensIdx, want:lensWant, r:Math.round(lensRadius()) }),
     vis: (i) => +shimmerVis(i).toFixed(3),
+    guide: (k) => setGuide(k),
+    sound: () => ({ state: sound.ctx ? sound.ctx.state : 'none', off: sound.off,
+                    gain: sound.master ? +sound.master.gain.value.toFixed(3) : 0 }),
     copy: (i) => STORY[i]
   };
 })();
