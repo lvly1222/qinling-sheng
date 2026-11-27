@@ -455,6 +455,42 @@
     .season-track{margin-top:5px;}
 
   }
+  /* phones: the sheet is held upright, so the marks gather at the edges
+     and the painting keeps the whole middle of the screen */
+  @media (max-width:560px){
+    .seasons{top:8px;padding:4px 5px 6px;}
+    .season-row{gap:0;}
+    .seasons .season{width:33px;height:27px;font-size:15px;}
+    .season-track{margin-top:4px;}
+    .brand{left:18px;top:56px;max-width:calc(100vw - 36px);}
+    .eyebrow{font-size:7.5px;letter-spacing:.26em;margin-bottom:9px;}
+    .eyebrow::before{width:18px;}
+    h1{font-size:29px;letter-spacing:.09em;margin-bottom:7px;}
+    .sub{font-size:10.5px;letter-spacing:.12em;}
+    .brand .rule{display:none;}
+    .readout{top:56px;right:16px;min-width:0;max-width:47vw;}
+    .readout .cap{font-size:7.5px;letter-spacing:.18em;}
+    .readout .cap span:first-child,.readout .cap i{display:none;}
+    .readout.idle .alt{font-size:19px;letter-spacing:.01em;}
+    .readout .alt .unit{font-size:10px;margin-left:4px;}
+    .zone{font-size:11px;letter-spacing:.07em;margin-top:5px;}
+    .readout .hr,.readout .species,.readout .note{display:none;}
+    .hint{left:18px;right:auto;bottom:118px;transform:none;
+      font-size:8px;letter-spacing:.1em;}
+    .record{left:18px;bottom:20px;}
+    .record .cap{font-size:8px;letter-spacing:.2em;}
+    .counts{gap:13px;margin-top:6px;}
+    .counts span{font-size:10px;}
+    .counts b{font-size:18px;margin-left:4px;}
+    .reset{right:16px;bottom:18px;padding:8px 2px 8px 20px;}
+    .reset .cn{font-size:12px;letter-spacing:.16em;}
+    .reset .en{font-size:7.5px;margin-top:4px;}
+    .gesture{right:16px;bottom:88px;padding:4px 2px 4px 20px;}
+    .gesture .cn{font-size:11px;letter-spacing:.14em;}
+    .gesture .en{font-size:7.5px;}
+    .gvid{left:16px;width:86px;height:64px;bottom:96px;}
+    .note{width:calc(100vw - 36px);}
+  }
   @media (max-height:620px){
     .brand .rule{display:none;}
     .sub{display:none;}
@@ -546,6 +582,13 @@
      Basic constants & helpers
   ------------------------------------------------------------ */
   const W = 1600, H = 900, TAU = Math.PI * 2;
+  /* the hand-scroll runs four screens east, a season to each stretch;
+     neighbouring stretches overlap by SEAM_F of a screen so the season
+     turns over gradually where the two stretches meet */
+  const SCROLL_TILES = 4;
+  const SEAM_F = .18;
+  const SCROLL_W = W * SCROLL_TILES;
+  let seedBias = 0;
   let FOG = [142, 158, 149];
   const PACE = .46;        /* atmosphere runs on a slower clock */
   let ambientMs = 0;
@@ -629,8 +672,10 @@
     if(a === undefined) a = 1;
     return 'rgba(' + Math.round(c[0]) + ',' + Math.round(c[1]) + ',' + Math.round(c[2]) + ',' + clamp(a,0,1) + ')';
   }
+  /* during a plate render the seed is nudged, so each stretch of the
+     scroll grows its own arrangement of trees, stones and grasses */
   function mulberry32(a){
-    a = a >>> 0;
+    a = (a + seedBias) >>> 0;
     return function(){
       a = (a + 0x6D2B79F5) >>> 0;
       let t = a;
@@ -692,19 +737,45 @@
     return catmull(p0[1], p1[1], p2[1], p3[1], t);
   }
 
-  const RIDGE_Y = new Float32Array(W+1);
-  const RIDGE_ALT = new Float32Array(W+1);
-  for(let x=0;x<=W;x++){
+  /* the ridge carries on east of the first screen: the hand-made crest
+     keeps going with the same rhythm of peaks and saddles, so the whole
+     scroll is one continuous range rather than a repeated view */
+  (function extendRidgeCtrl(){
+    const rr = mulberry32(0x2f6e2b1);
+    let x = 1600, y = 268, up = false;
+    while(x < SCROLL_W - 40){
+      const run = 96 + rr()*150;
+      const peak = !up && rr() < .78;
+      const next = peak
+        ? 190 + rr()*44
+        : 250 + rr()*74;
+      x = Math.min(SCROLL_W, x + run);
+      y = Math.round(next);
+      RIDGE_CTRL.push([Math.round(x), y]);
+      if(peak && rr() < .55){
+        x = Math.min(SCROLL_W, x + 30 + rr()*44);
+        RIDGE_CTRL.push([Math.round(x), Math.round(y + 6 + rr()*22)]);
+      }
+      up = peak;
+    }
+  })();
+
+  const RIDGE_Y = new Float32Array(SCROLL_W+1);
+  const RIDGE_ALT = new Float32Array(SCROLL_W+1);
+  for(let x=0;x<=SCROLL_W;x++){
     let y = sampleRidgeCtrl(x);
     y += (noise1(x*0.105) - .5) * 3.1 + (noise1(x*0.29 + 40) - .5) * 1.4;
     RIDGE_Y[x] = clamp(y, 186, 330);
     RIDGE_ALT[x] = 3771 - (RIDGE_Y[x] - 188) * 5.02;
   }
-  function ridgeY(x){ return RIDGE_Y[clamp(Math.round(x), 0, W)]; }
-  function ridgeAlt(x){ return RIDGE_ALT[clamp(Math.round(x), 0, W)]; }
+  /* during a plate render worldX0 is the scroll position of that screen's
+     left edge, so the same local x lands on the right stretch of the range */
+  let worldX0 = 0;
+  function ridgeY(x){ return RIDGE_Y[clamp(Math.round(x + worldX0), 0, SCROLL_W)]; }
+  function ridgeAlt(x){ return RIDGE_ALT[clamp(Math.round(x + worldX0), 0, SCROLL_W)]; }
   function altitudeAt(x, y){
-    x = clamp(x, 0, W);
-    const ry = ridgeY(x), ra = ridgeAlt(x);
+    const gx = clamp(Math.round(x + worldX0), 0, SCROLL_W);
+    const ry = RIDGE_Y[gx], ra = RIDGE_ALT[gx];
     if(y <= ry) return ra;
     const t = clamp((y - ry) / (H - ry), 0, 1);
     return ra + (760 - ra) * t;
@@ -738,16 +809,34 @@
     rock:{ cat:'rock', base:24 }
   };
 
-  // open meadow patches on the mountain slope
+  // open meadow patches on the mountain slope, spread along the scroll
   const CLEARINGS = [
     { x: 486, y: 618, rx: 148, ry: 58 },
     { x: 1128, y: 592, rx: 172, ry: 66 },
     { x: 792, y: 492, rx: 108, ry: 40 }
   ];
+  (function scatterClearings(){
+    const rr = mulberry32(0x4d21ab);
+    for(let t=1;t<SCROLL_TILES;t++){
+      const n = 2 + (rr() < .5 ? 1 : 0);
+      for(let k=0;k<n;k++){
+        const x = t*W + 120 + rr()*(W-240);
+        const ry = ridgeY(x);
+        const y = ry + 60 + rr()*(H - ry - 150);
+        CLEARINGS.push({
+          x,
+          y,
+          rx: 96 + rr()*96,
+          ry: 34 + rr()*40
+        });
+      }
+    }
+  })();
   function inClearing(x, y, pad){
     pad = pad || 0;
+    const wx = x + worldX0;
     for(const c of CLEARINGS){
-      const dx = (x - c.x) / (c.rx + pad);
+      const dx = (wx - c.x) / (c.rx + pad);
       const dy = (y - c.y) / (c.ry + pad);
       if(dx*dx + dy*dy < 1) return true;
     }
@@ -765,18 +854,33 @@
   let dpr = 1, cssW = 0, cssH = 0, scale = 1, ox = 0, oy = 0;
   let nowMs = performance.now();
 
-  /* the long scroll is one screen of painted world, mirrored beside itself,
-     so the ridge and the meadow join without a seam.  the camera glides
-     between the two halves as the pointer travels. */
-  const PANO_SCREENS = 2;
-  const PANO_TRAVEL = 0;   /* 不再横移进镜像世界，四季在原地流转 */
-  const DEFAULT_PROGRESS = .375;
+  /* the long scroll is four screens of one continuous painted range,
+     a season to each stretch; the camera unrolls it from spring to winter */
+  const DEFAULT_PROGRESS = 0;
   let plateScale = 1, plateW = 1, plateH = 1;
-  let camX = 0, camY = 0;
+  let camX = 0, camY = 0, prevCamX = 0, camVel = 0;
   let scrollProgress = DEFAULT_PROGRESS;
-  let seasonFloat = 1;
+  let seasonFloat = 0;
   let lastProgress = DEFAULT_PROGRESS;
-  const seasonPlates = [null, null, null, null];
+  const scrollTiles = [null, null, null, null];
+  /* screen distance from one seasonal stretch to the next: a full screen
+     less the seam the two stretches share */
+  function tileStep(){ return Math.max(1, (1 - SEAM_F) * cssW); }
+  function tileShift(t){ return t * tileStep() / Math.max(.001, scale); }
+  function camMax(){ return Math.max(0, (SCROLL_TILES - 1) * tileStep()); }
+  /* the scroll answers the hand at once, but the paper only ever travels at
+     a slow walk: one stretch of the painting takes a couple of seconds to
+     pass, so nothing races by unseen */
+  const CAM_SLOW = .22;
+  /* the paper never starts with a jolt: it gathers speed over a third of a
+     second and lets go just as gently when it reaches where the hand is */
+  const CAM_ACCEL = .5;
+  /* at the far east of the scroll the last season stands alone: the
+     stretch that used to lie under its western edge thins away */
+  function endK(){
+    const span = SEAM_F * cssW;
+    return clamp((camMax() - camX) / Math.max(1, span), 0, 1);
+  }
 
   function worldTransform(g){
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -798,15 +902,10 @@
     g.lineJoin = 'round';
   }
 
-  /* draw world-space creatures on one half of the panorama */
-  function presentTransform(g, copy){
+  /* draw world-space creatures over the unrolled stretch */
+  function presentTransform(g){
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if(copy === 1){
-      g.translate(PANO_SCREENS * cssW - camX, 0);
-      g.scale(-1, 1);
-    } else {
-      g.translate(-camX, 0);
-    }
+    g.translate(-camX, 0);
     g.translate(ox, oy);
     g.scale(scale, scale);
     g.globalAlpha = 1;
@@ -821,20 +920,15 @@
      has travelled.  The mask is kept at low resolution on purpose,
      so the edge of the colour always reads as a diffusing wash.
   ------------------------------------------------------------ */
-  const revealCanvasA = document.createElement('canvas');
-  const revctxA = revealCanvasA.getContext('2d');
-  const revealCanvasB = document.createElement('canvas');
-  const revctxB = revealCanvasB.getContext('2d');
+  /* the reveal is held over the whole scroll, so colour stays on the
+     stretch of painting where it was brushed in */
+  const revealCanvas = document.createElement('canvas');
+  const revctx = revealCanvas.getContext('2d');
   const maskCanvas = document.createElement('canvas');
   const maskctx = maskCanvas.getContext('2d', { willReadFrequently: true });
-  const MASK_W = 480, MASK_H = 270;
+  const MASK_W = 480 * SCROLL_TILES, MASK_H = 270;
   maskCanvas.width = MASK_W;
   maskCanvas.height = MASK_H;
-
-  let revealSeasonA = -99, revealSeasonB = -99;
-  function revealForSeason(s){
-    return s === revealSeasonA ? revealCanvasA : revealCanvasB;
-  }
 
   let maskDirty = true, revealDirty = true;
   const blooms = [];
@@ -852,16 +946,16 @@
     }
   }
   function maskAlphaAt(wx, wy){
-    const mx = (wx / W * MASK_W) | 0;
+    const mx = (wx / SCROLL_W * MASK_W) | 0;
     const my = (wy / H * MASK_H) | 0;
     if(mx < 0 || my < 0 || mx >= MASK_W || my >= MASK_H) return 0;
     return maskAlphaGrid[my * MASK_W + mx] / 255;
   }
 
   function stampMask(wx, wy, radius, alpha){
-    const mx = wx / W * MASK_W;
+    const mx = wx / SCROLL_W * MASK_W;
     const my = wy / H * MASK_H;
-    const mr = Math.max(1, radius / W * MASK_W);
+    const mr = Math.max(1, radius / SCROLL_W * MASK_W);
     const gr = maskctx.createRadialGradient(mx, my, 0, mx, my, mr);
     gr.addColorStop(0, 'rgba(255,255,255,' + alpha + ')');
     gr.addColorStop(.30, 'rgba(255,255,255,' + (alpha*.98) + ')');
@@ -905,8 +999,9 @@
   function hoverReveal(now){
     if(!hoverValid || now < revealCooldown) return;
     if(shimHot >= 0){
-      const maxCam = PANO_TRAVEL;
-      if(Math.abs(camX - lastProgress * maxCam) > 2) return;
+      /* the light only reveals colour once the scroll has come to rest
+         under it */
+      if(Math.abs(camX - lastProgress * camMax()) > 2) return;
     }
     if(now - lastHoverReveal < 250) return;
     lastHoverReveal = now;
@@ -923,7 +1018,7 @@
   /* season grade for one screen of the painted world */
   function colouriseScene(bg, s){
     const cv = makePlateCanvas();
-    const c = cv.getContext('2d', { alpha: false });
+    const c = cv.getContext('2d');
     c.filter = SEASON_FILTER[s];
     c.drawImage(bg, 0, 0);
     c.filter = 'none';
@@ -938,7 +1033,7 @@
   /* the grey stone plate, with its faint cool cast */
   function greyscalePlate(colorPlate){
     const cv = makePlateCanvas();
-    const c = cv.getContext('2d', { alpha: false, willReadFrequently: true });
+    const c = cv.getContext('2d', { willReadFrequently: true });
     c.drawImage(colorPlate, 0, 0);
     const img = c.getImageData(0, 0, plateW, plateH);
     const d = img.data;
@@ -953,71 +1048,92 @@
     return cv;
   }
 
-  /* the scroll is the painted screen mirrored beside itself, so the grey
-     plate becomes a two-screen panorama with a quiet, seamless join */
-  function mirrorPlate(half){
-    const cv = document.createElement('canvas');
-    cv.width = plateW * PANO_SCREENS;
-    cv.height = plateH;
-    const c = cv.getContext('2d', { alpha: false });
-    c.drawImage(half, 0, 0);
-    c.save();
-    c.translate(plateW * PANO_SCREENS, 0);
-    c.scale(-1, 1);
-    c.drawImage(half, 0, 0);
-    c.restore();
-    half.width = half.height = 1;
-    return cv;
-  }
-
-  function buildSeasonPlates(s){
+  /* one seasonal stretch of the scroll: the painting as it looks in the
+     season that stretch belongs to */
+  function renderTile(t, s){
     const keepSeason = SEASON, keepFog = FOG;
     SEASON = s;
     FOG = SEASON_FOG[s].slice();
-    const bg = renderSceneHalf();
-    const color = colouriseScene(bg, s);
+    const bg = renderSceneHalf(t, tileShift(t));
+    const col = colouriseScene(bg, s);
     bg.width = bg.height = 1;
-    const grey = greyscalePlate(color);
-    const greyPano = mirrorPlate(grey);
-    seasonPlates[s] = { color, greyPano };
     SEASON = keepSeason;
     FOG = keepFog;
+    return col;
   }
 
-  function compositeRevealInto(cv, c, s){
-    if(!c) return;
-    if(cv.width !== plateW || cv.height !== plateH){
-      cv.width = plateW;
-      cv.height = plateH;
-    }
-    c.setTransform(1,0,0,1,0,0);
-    c.globalCompositeOperation = 'source-over';
-    c.globalAlpha = 1;
-    c.clearRect(0, 0, plateW, plateH);
-    const plate = seasonPlates[s];
-    if(plate){
-      c.drawImage(plate.color, 0, 0);
-      if(plantCanvas.width > 1){
-        c.filter = SEASON_PLANT_FILTER[s];
-        c.drawImage(plantCanvas, 0, 0);
-        c.filter = 'none';
-      }
-    }
+  /* the next stretch lies under this one's eastern edge, and this edge
+     thins away so the two seasons melt into each other as the scroll
+     is unrolled */
+  function fadeEast(cv){
+    const c = cv.getContext('2d');
+    const w = cv.width, h = cv.height;
+    const x0 = w * (1 - SEAM_F);
+    const gr = c.createLinearGradient(x0, 0, w, 0);
+    gr.addColorStop(0, 'rgba(0,0,0,1)');
+    gr.addColorStop(.42, 'rgba(0,0,0,.80)');
+    gr.addColorStop(.74, 'rgba(0,0,0,.42)');
+    gr.addColorStop(1, 'rgba(0,0,0,0)');
+    c.save();
     c.globalCompositeOperation = 'destination-in';
-    c.drawImage(maskCanvas, 0, 0, plateW, plateH);
-    c.globalCompositeOperation = 'source-over';
+    c.fillStyle = gr;
+    c.fillRect(0, 0, w, h);
+    c.restore();
   }
 
-  function recompositeReveals(A, B){
-    if(!seasonPlates[A] || !seasonPlates[B]) return;
-    compositeRevealInto(revealCanvasA, revctxA, A);
-    revealSeasonA = A;
-    if(B !== A){
-      compositeRevealInto(revealCanvasB, revctxB, B);
-      revealSeasonB = B;
-    } else {
-      revealSeasonB = -99;
+  function buildScrollTiles(){
+    for(let t=0;t<SCROLL_TILES;t++){
+      const color = renderTile(t, clamp(t, 0, 3));
+      const grey = greyscalePlate(color);
+      if(t < SCROLL_TILES - 1){
+        fadeEast(color);
+        fadeEast(grey);
+      }
+      if(scrollTiles[t]){
+        scrollTiles[t].color.width = scrollTiles[t].color.height = 1;
+        scrollTiles[t].grey.width = scrollTiles[t].grey.height = 1;
+      }
+      scrollTiles[t] = { color, grey };
     }
+  }
+
+  /* the colour layer for the frame: the painted colour of every stretch
+     that shows, kept only where the pointer has brushed it in */
+  function rebuildReveal(){
+    if(revealCanvas.width !== plateW || revealCanvas.height !== plateH){
+      revealCanvas.width = plateW;
+      revealCanvas.height = plateH;
+    }
+    revctx.setTransform(1,0,0,1,0,0);
+    revctx.globalCompositeOperation = 'source-over';
+    revctx.globalAlpha = 1;
+    revctx.clearRect(0, 0, plateW, plateH);
+
+    /* later stretches sit under earlier ones, so the eastern edge of each
+       stretch thins over the season that follows it */
+    for(let t=SCROLL_TILES-1;t>=0;t--){
+      const dx = t*tileStep() - camX;
+      if(dx >= cssW || dx + cssW <= 0) continue;
+      const tile = scrollTiles[t];
+      if(!tile) continue;
+      revctx.globalAlpha = t < SCROLL_TILES - 1 ? endK() : 1;
+      revctx.drawImage(tile.color, 0, 0, plateW, plateH,
+        dx*plateScale, 0, plateW, plateH);
+      revctx.globalAlpha = 1;
+    }
+
+    if(plantCanvas.width > 1){
+      revctx.filter = SEASON_PLANT_FILTER[SEASON];
+      revctx.drawImage(plantCanvas, 0, 0);
+      revctx.filter = 'none';
+    }
+
+    revctx.globalCompositeOperation = 'destination-in';
+    const mw = (cssW / scale) / SCROLL_W * MASK_W;
+    const mx = ((camX - ox) / scale) / SCROLL_W * MASK_W;
+    revctx.drawImage(maskCanvas, mx, 0, mw, MASK_H, 0, 0, plateW, plateH);
+    revctx.globalCompositeOperation = 'source-over';
+
     maskDirty = false;
     revealDirty = false;
     refreshMaskAlpha();
@@ -1196,68 +1312,92 @@
     // cool upper-left wash
     softEllipse(g, 240, 40, 760, 320, [198, 212, 207], summer ? .20 : .34);
 
-    // sun: diffuse most of the year, a clear bright disc in summer.
-    // it sits well inside the painted screen, so the frame never cuts
-    // it and it no longer needs a mirrored half to look whole.
-    const sunX = W * .70;
+    // sun: one sun for the whole scroll, standing over the summer stretch,
+    // so it drifts by as the painting is unrolled
+    const sunX = SUN_GX - worldX0;
+    const sunOn = sunX > -820 && sunX < W + 820;
     const sunY = summer ? 152 : 118;
-    softEllipse(g, sunX, sunY, summer ? 430 : 560, summer ? 350 : 470,
-      summer ? [255, 220, 158] : [246, 229, 195], summer ? .30 : .46);
-    softEllipse(g, sunX, sunY, summer ? 150 : 190, summer ? 126 : 152,
-      summer ? [255, 238, 192] : [250, 240, 214], summer ? .40 : .60);
-    if(summer) softEllipse(g, sunX, sunY, 76, 66, [255, 206, 126], .40);
-    softEllipse(g, sunX, sunY, summer ? 50 : 56, summer ? 44 : 48,
-      [255, 253, 243], summer ? 1 : .72);
+    if(sunOn){
+      softEllipse(g, sunX, sunY, summer ? 430 : 560, summer ? 350 : 470,
+        summer ? [255, 220, 158] : [246, 229, 195], summer ? .30 : .46);
+      softEllipse(g, sunX, sunY, summer ? 150 : 190, summer ? 126 : 152,
+        summer ? [255, 238, 192] : [250, 240, 214], summer ? .40 : .60);
+      if(summer) softEllipse(g, sunX, sunY, 76, 66, [255, 206, 126], .40);
+      softEllipse(g, sunX, sunY, summer ? 50 : 56, summer ? 44 : 48,
+        [255, 253, 243], summer ? 1 : .72);
 
-    if(summer){
-      // a warm limb around the disc
-      g.save();
-      g.beginPath();
-      g.ellipse(sunX, sunY, 50, 44, 0, 0, TAU);
-      g.strokeStyle = 'rgba(255,198,108,.46)';
-      g.lineWidth = 5;
-      g.stroke();
-      g.restore();
-
-      // a soft crown of light around the sun
-      g.save();
-      g.translate(sunX, sunY);
-      g.globalCompositeOperation = 'lighter';
-      for(let i=0;i<12;i++){
-        const a = i*TAU/12 + .18;
-        const len = 240 + (i%4)*66;
+      if(summer){
+        // a warm limb around the disc
         g.save();
-        g.rotate(a);
-        softEllipse(g, len*.52, 0, len*.52, 2.8 + (i%3)*1.6, [255, 226, 166], .16);
+        g.beginPath();
+        g.ellipse(sunX, sunY, 50, 44, 0, 0, TAU);
+        g.strokeStyle = 'rgba(255,198,108,.46)';
+        g.lineWidth = 5;
+        g.stroke();
+        g.restore();
+
+        // a soft crown of light around the sun
+        g.save();
+        g.translate(sunX, sunY);
+        g.globalCompositeOperation = 'lighter';
+        for(let i=0;i<12;i++){
+          const a = i*TAU/12 + .18;
+          const len = 240 + (i%4)*66;
+          g.save();
+          g.rotate(a);
+          softEllipse(g, len*.52, 0, len*.52, 2.8 + (i%3)*1.6, [255, 226, 166], .16);
+          g.restore();
+        }
         g.restore();
       }
-      g.restore();
     }
 
-    // high veil clouds (thinner in summer)
+    // high veil clouds, drifting the length of the scroll (thinner in summer)
     const cA = summer ? .70 : 1;
-    softEllipse(g, 330, 212, 470, 34, [242, 242, 233], .34*cA);
-    softEllipse(g, 980, 172, 540, 38, [244, 243, 234], .30*cA);
-    softEllipse(g, 1440, 268, 410, 30, [244, 239, 226], .32*cA);
-    softEllipse(g, 700, 318, 620, 44, [243, 242, 233], .30*cA);
-    softEllipse(g, 140, 360, 440, 38, [243, 242, 233], .22*cA);
+    for(const cl of CLOUDS){
+      const x = cl.x - worldX0;
+      if(x < -cl.rx - 60 || x > W + cl.rx + 60) continue;
+      softEllipse(g, x, cl.y, cl.rx, cl.ry, cl.col, cl.a*cA);
+    }
 
-    // warm ray
-    g.save();
-    const ray = g.createLinearGradient(1360, 100, 850, 690);
-    ray.addColorStop(0, summer ? 'rgba(255,238,196,.26)' : 'rgba(250,236,204,.16)');
-    ray.addColorStop(.5, summer ? 'rgba(255,236,196,.075)' : 'rgba(250,236,204,.045)');
-    ray.addColorStop(1, 'rgba(250,236,204,0)');
-    g.fillStyle = ray;
-    g.beginPath();
-    g.moveTo(1100, 0);
-    g.lineTo(1600, 0);
-    g.lineTo(1120, 700);
-    g.lineTo(760, 700);
-    g.closePath();
-    g.fill();
-    g.restore();
+    // warm ray, falling from the sun
+    if(sunOn){
+      g.save();
+      const ray = g.createLinearGradient(sunX + 300, 100, sunX - 210, 690);
+      ray.addColorStop(0, summer ? 'rgba(255,238,196,.26)' : 'rgba(250,236,204,.16)');
+      ray.addColorStop(.5, summer ? 'rgba(255,236,196,.075)' : 'rgba(250,236,204,.045)');
+      ray.addColorStop(1, 'rgba(250,236,204,0)');
+      g.fillStyle = ray;
+      g.beginPath();
+      g.moveTo(sunX + 40, 0);
+      g.lineTo(sunX + 540, 0);
+      g.lineTo(sunX + 60, 700);
+      g.lineTo(sunX - 300, 700);
+      g.closePath();
+      g.fill();
+      g.restore();
+    }
   }
+
+  /* the sun belongs to the summer stretch of the scroll */
+  const SUN_GX = W * 1.32;
+
+  /* veil clouds sprinkled along the whole scroll */
+  const CLOUDS = (function(){
+    const rr = mulberry32(0x5c10d);
+    const out = [];
+    for(let x = 240; x < SCROLL_W + 240; x += 300 + rr()*230){
+      out.push({
+        x,
+        y: 150 + rr()*220,
+        rx: 330 + rr()*300,
+        ry: 24 + rr()*20,
+        a: .20 + rr()*.15,
+        col: rr() < .36 ? [244, 239, 226] : [243, 242, 233]
+      });
+    }
+    return out;
+  })();
 
   const FAR_LAYERS = [
     {
@@ -1279,7 +1419,9 @@
 
   function drawFarRidges(g){
     FAR_LAYERS.forEach((layer, idx) => {
-      const topAt = x => layer.base + layer.wave(x);
+      /* the distant ranges belong to the land, not to the frame, so two
+         neighbouring stretches agree about their silhouette */
+      const topAt = x => layer.base + layer.wave(x + worldX0);
       g.beginPath();
       g.moveTo(-20, topAt(-20));
       for(let x=0;x<=W+20;x+=6) g.lineTo(x, topAt(x));
@@ -1711,9 +1853,12 @@
   }
 
   function drawClearings(g){
-    const rnd = mulberry32(0x6c2b91);
+    const x0 = worldX0, x1 = worldX0 + W;
     CLEARINGS.forEach((c, ci) => {
-      const alt = altitudeAt(c.x, c.y);
+      if(c.x + c.rx * 2.4 < x0 || c.x - c.rx * 2.4 > x1) return;
+      const cx = c.x - x0;
+      const rnd = mulberry32(0x6c2b91 + ci*7919);
+      const alt = altitudeAt(cx, c.y);
       const base = alt > 2200 ? [92, 105, 76] : [104, 116, 81];
 
       // an irregular clearing, made from three overlapping patches
@@ -1722,7 +1867,7 @@
         const ox = (k-1) * c.rx * .36;
         const oy = (k%2 ? -1 : 1) * c.ry * .14;
         g.globalAlpha = .13;
-        blobPath(g, c.x + ox, c.y + oy, c.rx*(.62 + k*.06), c.ry*(.60 + k*.05), 811 + ci*37 + k*9, 11);
+        blobPath(g, cx + ox, c.y + oy, c.rx*(.62 + k*.06), c.ry*(.60 + k*.05), 811 + ci*37 + k*9, 11);
         g.fillStyle = rgba(mix(base, [114, 124, 86], .10), .9);
         g.fill();
       }
@@ -1732,13 +1877,13 @@
       for(let k=0;k<10;k++){
         const ox = (rnd()-.5) * c.rx * 1.5;
         const oy = (rnd()-.5) * c.ry * 1.3;
-        softEllipse(g, c.x + ox, c.y + oy + c.ry*.2,
+        softEllipse(g, cx + ox, c.y + oy + c.ry*.2,
           18 + rnd()*50, 3 + rnd()*8, k%2 ? [72, 87, 62] : [119, 128, 90], .07 + rnd()*.06);
       }
       // darker fringe
       for(let k=0;k<9;k++){
         const a = k/9*TAU;
-        softEllipse(g, c.x + Math.cos(a)*c.rx*.82, c.y + Math.sin(a)*c.ry*.82,
+        softEllipse(g, cx + Math.cos(a)*c.rx*.82, c.y + Math.sin(a)*c.ry*.82,
           c.rx*.14, c.ry*.10, [66, 82, 58], .09);
       }
 
@@ -1746,7 +1891,7 @@
       const n = 92 + Math.floor(rnd()*46);
       for(let k=0;k<n;k++){
         const a = rnd()*TAU, d = Math.sqrt(rnd())*.84;
-        const x = c.x + Math.cos(a)*c.rx*d;
+        const x = cx + Math.cos(a)*c.rx*d;
         const y = c.y + Math.sin(a)*c.ry*d + c.ry*.26;
         const type = rnd() < .76 ? 'grass' : (rnd() < .66 ? 'fern' : 'flower');
         const s = (type === 'grass' ? 10 + rnd()*15 : (type === 'fern' ? 10 + rnd()*12 : 8 + rnd()*10));
@@ -1754,15 +1899,15 @@
           .04 + rnd()*.07, type === 'grass' ? .38 : .32, 1, alt);
       }
       // a low shrub at the edge
-      if(ci !== 2){
-        const sx = c.x + (ci?1:-1)*c.rx*.44;
+      if(ci % 3 !== 2){
+        const sx = cx + (ci%2 ? 1 : -1)*c.rx*.44;
         const sy = c.y + c.ry*.46;
         drawPlantByType(g, alt > 2300 ? 'rhodo' : 'bamboo', sx, sy, 26 + rnd()*15,
           (rnd()*99999)|0, .06, .38, 1, alt);
       }
       // a few stones
       for(let k=0;k<4;k++){
-        rockPoly(g, c.x + (rnd()-.5)*c.rx*1.2, c.y + (rnd()-.2)*c.ry,
+        rockPoly(g, cx + (rnd()-.5)*c.rx*1.2, c.y + (rnd()-.2)*c.ry,
           3 + rnd()*6, (rnd()*99999)|0, [120,124,106], .12);
       }
     });
@@ -2313,17 +2458,37 @@
     const n = detail > .6 ? 62 : 26;
     const cd = fogged(shade(col, .24), fog);
     const cl = fogged(lighten(col, .22), fog);
+    /* the fringe is dozens of hairlines: gather them into a few shared
+       paths and stroke each path once, rather than one stroke per needle */
+    const NE = [cl, cd];
+    const NW = [];
+    for(let i=0;i<8;i++) NW.push([]);
     for(let k=0;k<n;k++){
       const a = rnd()*TAU;
       const d = .68 + rnd()*.36;
       const px = cx + Math.cos(a)*rx*d;
       const py = cy + Math.sin(a)*ry*d;
       const len = (2.2 + rnd()*5.6)*(detail > .6 ? 1 : .62);
-      g.strokeStyle = rgba(k%3 === 0 ? cl : cd, .28 + rnd()*.20);
-      g.lineWidth = Math.max(.35, .5 + rnd()*.7);
+      const al = .28 + rnd()*.20;
+      const wd = Math.max(.35, .5 + rnd()*.7);
+      const ci = k%3 === 0 ? 0 : 1;
+      const wi = wd > .85 ? 1 : 0;
+      const ai = al > .38 ? 1 : 0;
+      const bin = ci*4 + wi*2 + ai;
+      const list = NW[bin]; list.push(px, py,
+        px + Math.cos(a)*len*1.2, py + Math.sin(a)*len*.90 + len*.28);
+    }
+    for(let bin=0;bin<8;bin++){
+      const list = NW[bin];
+      if(!list.length) continue;
+      const ci = bin >> 2, wi = (bin >> 1) & 1, ai = bin & 1;
+      g.strokeStyle = rgba(NE[ci], ai ? .46 : .30);
+      g.lineWidth = wi ? 1.02 : .52;
       g.beginPath();
-      g.moveTo(px, py);
-      g.lineTo(px + Math.cos(a)*len*1.2, py + Math.sin(a)*len*.90 + len*.28);
+      for(let j=0;j<list.length;j+=4){
+        g.moveTo(list[j], list[j+1]);
+        g.lineTo(list[j+2], list[j+3]);
+      }
       g.stroke();
     }
   }
@@ -4149,12 +4314,15 @@
     g.restore();
   }
 
-  function renderSceneHalf(){
+  function renderSceneHalf(pane, originX){
     const cv = makePlateCanvas();
-    const g = cv.getContext('2d', { alpha: false });
+    const g = cv.getContext('2d');
     g.setTransform(1,0,0,1,0,0);
     g.fillStyle = '#e9ece3';
     g.fillRect(0,0,cv.width,cv.height);
+    const keepX0 = worldX0, keepBias = seedBias;
+    worldX0 = Math.round(originX || 0);
+    seedBias = ((pane|0) * 0x1f3d5b7) | 0;
     plateTransform(g);
 
     drawSky(g);
@@ -4175,6 +4343,9 @@
     drawForestEdge(g);
     drawForegroundTrees(g);
     drawSeasonOverlay(g);
+
+    worldX0 = keepX0;
+    seedBias = keepBias;
     return cv;
   }
 
@@ -4204,6 +4375,10 @@
   const cFlowerEl = document.getElementById('cFlower');
   const cWoodEl = document.getElementById('cWood');
   const hintEl = document.getElementById('hint');
+  /* a hand-held screen has no mouse to move: say so in its own words */
+  if(window.matchMedia && window.matchMedia('(max-width:560px)').matches){
+    hintEl.textContent = '左右滑动流转四季 · 轻触光点细看';
+  }
   const resetEl = document.getElementById('reset');
   const seasonsEl = document.getElementById('seasons');
   const seasonDotEl = document.getElementById('seasonDot');
@@ -4239,15 +4414,10 @@
   }
 
   function screenToWorld(cx, cy){
-    /* the panorama is the world mirrored once; fold the cursor back
-       onto the painted half it is actually travelling over */
-    let panoX = cx + camX;
-    if(panoX > cssW) panoX = PANO_SCREENS * cssW - panoX;
-    panoX = clamp(panoX, 0, cssW);
-    return { x: (panoX - ox) / scale, y: (cy - oy) / scale };
+    return { x: (cx + camX - ox) / scale, y: (cy - oy) / scale };
   }
   function isValidGround(x, y){
-    return x >= 0 && x <= W && y >= ridgeY(x) + 1 && y <= H;
+    return x >= 0 && x <= SCROLL_W && y >= ridgeY(x) + 1 && y <= H;
   }
 
   function plantSizeFor(type, x, y, alt){
@@ -4377,8 +4547,13 @@
     }
     pctx.setTransform(1,0,0,1,0,0);
     pctx.clearRect(0,0,plantCanvas.width,plantCanvas.height);
-    plateTransform(pctx);
-    const sorted = plants.slice().sort((a,b) => a.y - b.y);
+    /* the plant layer follows the unrolled stretch, and only what is in
+       the frame is drawn */
+    pctx.setTransform(plateScale, 0, 0, plateScale, plateScale*(ox - camX), plateScale*oy);
+    pctx.scale(scale, scale);
+    const xlo = (camX - ox) / scale - 140;
+    const xhi = (camX - ox + cssW) / scale + 140;
+    const sorted = plants.filter(p => p.x > xlo && p.x < xhi).sort((a,b) => a.y - b.y);
     for(const pl of sorted) drawPlant(pctx, pl, now);
   }
 
@@ -4548,7 +4723,7 @@
       if(now < bee.scatterT){ bee.vx *= .93; bee.vy *= .93; }
       bee.x += bee.vx*adt;
       bee.y += bee.vy*adt + Math.sin(t*8 + bee.phase)*7*adt;
-      bee.x = clamp(bee.x, 18, W - 18);
+      bee.x = clamp(bee.x, 18, SCROLL_W - 18);
       bee.y = clamp(bee.y, Math.max(ridgeY(bee.x) + 6, 90), H - 14);
     }
   }
@@ -4572,12 +4747,16 @@
   const seasonFX = [];
   let fxLast = 0;
 
+  /* the window of world the frame is showing, used to keep weather local */
+  function viewWX0(){ return (camX - ox) / scale; }
+
   function reseedSeasonFX(){
     seasonFX.length = 0;
     const n = SEASON === 3 ? 150 : (SEASON === 2 ? 46 : (SEASON === 0 ? 42 : 18));
+    const vx = viewWX0();
     for(let i=0;i<n;i++){
       seasonFX.push({
-        x: Math.random()*W,
+        x: vx + Math.random()*W,
         y: Math.random()*H,
         vy: SEASON === 3 ? 26 + Math.random()*34 : 9 + Math.random()*20,
         vx: -8 + Math.random()*16,
@@ -4594,14 +4773,15 @@
   }
 
   function updateSeasonFX(now, dt){
+    const vx = viewWX0();
     for(const p of seasonFX){
       p.y += p.vy*dt*PACE;
       p.x += (p.vx + Math.sin(ambientMs*.0011 + p.phase)*p.sway)*dt*PACE;
       p.rot += p.vr*dt*PACE;
-      if(p.y > H + 8){ p.y = -10; p.x = Math.random()*W; }
+      if(p.y > H + 8){ p.y = -10; p.x = vx + Math.random()*W; }
       if(p.y < -12) p.y = H + 6;
-      if(p.x < -10) p.x = W + 8;
-      if(p.x > W + 10) p.x = -8;
+      if(p.x < vx - 10) p.x = vx + W + 8;
+      if(p.x > vx + W + 10) p.x = vx - 8;
     }
   }
 
@@ -4719,7 +4899,12 @@
      The pointer is itself a bee; a small swarm of companions keeps
      close about it, each drifting on its own slow orbit.
   ------------------------------------------------------------ */
-  const ptrBee = { x:0, y:0, ang:0, a:0, wing:0, init:false };
+  const ptrBee = { x:0, y:0, vx:0, vy:0, ang:0, a:0, wing:0, init:false };
+
+  /* one even pace for the leading bee: a slow steady cruise, and any
+     change of speed is spread over several frames, so it never bolts */
+  const PTR_CRUISE = 158;   /* px per second */
+  const PTR_ACCEL  = 210;   /* px per second, per second */
 
   /* the leader flies at the pointer; the others mill around it, each on
      its own slow orbit, so the group reads as a swarm and never a row */
@@ -4744,19 +4929,29 @@
     if(show && !ptrBee.init){ ptrBee.init = true; ptrBee.x = tx; ptrBee.y = ty; }
     if(ptrBee.init){
       const dx = tx - ptrBee.x, dy = ty - ptrBee.y;
-      const k = Math.min(1, dt * 2.6);
-      let sx = dx * k, sy = dy * k;
-      const step = Math.sqrt(sx*sx + sy*sy);
-      const maxStep = 340 * dt;             /* 滑行速度上限，约 340 px/s */
-      if(step > maxStep){ sx *= maxStep / step; sy *= maxStep / step; }
-      ptrBee.x += sx;
-      ptrBee.y += sy;
-      const sp = Math.sqrt(dx*dx + dy*dy);
-      if(sp > 1.4){
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if(dist < 1.6){
+        ptrBee.x = tx; ptrBee.y = ty;
+        ptrBee.vx *= .4; ptrBee.vy *= .4;
+      } else {
+        const ux = dx / dist, uy = dy / dist;
+        /* the cruise stays the same however far the hand has gone; only
+           the final few pixels ease off, so it drifts in and settles */
+        const cruise = Math.min(PTR_CRUISE, PTR_CRUISE * dist / 16);
+        let ax = ux * cruise - ptrBee.vx;
+        let ay = uy * cruise - ptrBee.vy;
+        const al = Math.sqrt(ax*ax + ay*ay);
+        const cap = PTR_ACCEL * dt;
+        if(al > cap){ ax *= cap / al; ay *= cap / al; }
+        ptrBee.vx += ax; ptrBee.vy += ay;
+        ptrBee.x += ptrBee.vx * dt;
+        ptrBee.y += ptrBee.vy * dt;
+      }
+      if(dist > 1.4){
         const want = Math.atan2(dy, dx);
         let diff = want - ptrBee.ang;
         diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-        ptrBee.ang += diff * Math.min(1, dt * 3.2);
+        ptrBee.ang += diff * Math.min(1, dt * 1.9);
       }
     }
     ptrBee.a += ((show ? 1 : 0) - ptrBee.a) * Math.min(1, dt * 6);
@@ -4911,14 +5106,15 @@
   ------------------------------------------------------------ */
   function drawAnimatedMist(g, now){
     const t = now * .000030;
+    const vx = viewWX0();
     g.save();
     g.beginPath();
-    g.rect(0, 0, W, 790);
+    g.rect(vx, 0, W, 790);
     g.clip();
-    softEllipse(g, 300 + Math.sin(t)*55, 520, 520, 74, [240,242,234], .085);
-    softEllipse(g, 1120 + Math.cos(t*1.3)*44, 470, 600, 88, [240,242,234], .075);
-    softEllipse(g, 760 + Math.sin(t*.8+2)*70, 640, 720, 62, [239,241,232], .055);
-    softEllipse(g, 1480 + Math.sin(t*1.1+1)*30, 560, 420, 58, [240,242,234], .06);
+    softEllipse(g, vx + 300 + Math.sin(t)*55, 520, 520, 74, [240,242,234], .085);
+    softEllipse(g, vx + 1120 + Math.cos(t*1.3)*44, 470, 600, 88, [240,242,234], .075);
+    softEllipse(g, vx + 760 + Math.sin(t*.8+2)*70, 640, 720, 62, [239,241,232], .055);
+    softEllipse(g, vx + 1480 + Math.sin(t*1.1+1)*30, 560, 420, 58, [240,242,234], .06);
     g.restore();
   }
 
@@ -5402,11 +5598,12 @@
 
   function setSeason(i){
     i = clamp(i | 0, 0, 3);
-    lastProgress = clamp((i + .5) / 4, 0, 1);
-    camX = lastProgress * PANO_TRAVEL;
+    camX = clamp(i * tileStep(), 0, camMax());
+    camVel = 0;
+    lastProgress = camMax() > 0 ? camX / camMax() : 0;
     scrollProgress = lastProgress;
-    seasonFloat = clamp(scrollProgress * 4 - .5, 0, 3);
-    applyDominantSeason(Math.round(seasonFloat));
+    seasonFloat = i;
+    applyDominantSeason(i);
     revealDirty = true;
     updateSeasonUI();
   }
@@ -5419,13 +5616,13 @@
      opens a quiet first-person note. Nothing else changes scale.
   ------------------------------------------------------------ */
   const STORY = [
-    { s:0, x:.135, y:.620, cap:'春 · 成长', lead:'我从一枚卵开始。',
+    { s:0, x:.380, y:.620, cap:'春 · 成长', lead:'我从一枚卵开始。',
       text:'我经历卵、幼虫和蛹，才成为一只会飞的蜜蜂。最初我留在巢内，从清洁巢房、照顾幼虫开始，慢慢认识这个由花香、薄雾和伙伴组成的世界。' },
     { s:1, x:.455, y:.720, cap:'夏 · 采蜜', lead:'循着花香，我飞出巢去。',
       text:'留坝山林里有丰富的野山花。我靠近花朵，用口器吸食花蜜，花粉也沾在身上。采到花蜜后，我把它带回蜂巢，交给伙伴们继续酿造。' },
-    { s:2, x:.705, y:.400, cap:'秋 · 储蜜', lead:'花蜜要慢慢变成蜂蜜。',
+    { s:2, x:.705, y:.455, cap:'秋 · 储蜜', lead:'花蜜要慢慢变成蜂蜜。',
       text:'采回来的花蜜还不是成熟的蜂蜜。伙伴们反复传递花蜜，让酶充分混合，再一起扇动翅膀带走水分。花蜜慢慢成熟，被储进巢房。留坝棒棒蜜采用中华蜂和传统棒棒桶定点养殖，酿蜜周期长，通常一年只取一次蜜。' },
-    { s:3, x:.800, y:.780, cap:'冬 · 越冬', lead:'我们把花香留给冬天。',
+    { s:3, x:.778, y:.700, cap:'冬 · 越冬', lead:'我们把花香留给冬天。',
       text:'天气冷下来，我们不再频繁出巢，而是在巢内结成蜂团，彼此取暖。外层的伙伴和里层的伙伴会缓慢交换位置，靠秋天存下的蜂蜜度过漫长的冬天。' }
   ];
   const GLOW_PERIOD = [5200, 4800, 5600, 5000];
@@ -5434,7 +5631,7 @@
      it fades out as the scroll crosses into the neighbouring season */
   function shimmerVis(i){
     const d = Math.min(seasonFloat - (i - .5), (i + .5) - seasonFloat);
-    return clamp(d * 6, 0, 1);
+    return clamp(d * 5, 0, 1);
   }
 
   const noteEl = document.getElementById('note');
@@ -5449,8 +5646,12 @@
   let noteAwaySince = 0;
   const NOTE_AWAY_R = 210, NOTE_AWAY_MS = 1000;
 
+  /* each light rests in its own stretch of the scroll, so it is carried
+     along by the unrolling rather than pinned to the frame */
   function shimmerAt(i){
-    return { x: STORY[i].x * cssW, y: STORY[i].y * cssH };
+    const wx = tileShift(i) + STORY[i].x * W;
+    const wy = STORY[i].y * H;
+    return { x: ox + wx * scale - camX, y: oy + wy * scale };
   }
 
   function shimmerHit(x, y){
@@ -5509,10 +5710,22 @@
     const p = shimmerAt(i);
     const hh = glowcapEl.offsetHeight || 34;
     const off = lensRadius() * 1.02 + 26;
+    const w = glowcapEl.offsetWidth || 150;
     let top = p.y + off;
     if(top + hh > cssH - 76) top = p.y - off - hh;
     top = clamp(top, 80, Math.max(80, cssH - hh - 72));
-    glowcapEl.style.left = Math.round(clamp(p.x, 96, Math.max(96, cssW - 96))) + 'px';
+    const left = clamp(p.x, 96, Math.max(96, cssW - 96));
+    /* the words never run into the little gesture plate in the corner:
+       if they would, they move to the quiet air above the light instead */
+    if(gestureEl){
+      const g = gestureEl.getBoundingClientRect();
+      const overlaps = left + w/2 + 14 > g.left && left - w/2 - 14 < g.right &&
+                       top + hh + 10 > g.top && top - 10 < g.bottom;
+      if(overlaps){
+        top = clamp(p.y - off - hh, 80, Math.max(80, cssH - hh - 72));
+      }
+    }
+    glowcapEl.style.left = Math.round(left) + 'px';
     glowcapEl.style.top = Math.round(top) + 'px';
   }
 
@@ -6364,21 +6577,29 @@
       const p = shimmerAt(i);
       const breath = .5 + .5 * Math.sin(now * TAU / GLOW_PERIOD[i] + i * 1.7);
       const hot = shimHot === i, open = noteOpen === i;
-      let a = (.15 + .09 * breath) * vis;
-      if(hot) a = .52 * vis;
-      if(open) a = .50 * vis;
-      const R = 26 + 8 * breath + (hot || open ? 12 : 0);
+      let a = (.34 + .14 * breath) * vis;
+      if(hot) a = .74 * vis;
+      if(open) a = .66 * vis;
+      const R = 32 + 10 * breath + (hot || open ? 16 : 0);
+      /* a soft warm halo, plus a slightly darker rim so it still reads
+         on the pale grey of the uncoloured plate */
+      const halo = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, R * 1.12);
+      halo.addColorStop(0, 'rgba(120,96,44,0)');
+      halo.addColorStop(.78, 'rgba(120,96,44,' + (a * .10).toFixed(3) + ')');
+      halo.addColorStop(1, 'rgba(120,96,44,0)');
+      g.fillStyle = halo;
+      g.beginPath(); g.arc(p.x, p.y, R * 1.12, 0, TAU); g.fill();
       const gr = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, R);
-      gr.addColorStop(0, 'rgba(255,246,206,' + a.toFixed(3) + ')');
-      gr.addColorStop(.32, 'rgba(255,238,188,' + (a * .58).toFixed(3) + ')');
-      gr.addColorStop(.70, 'rgba(255,230,168,' + (a * .22).toFixed(3) + ')');
+      gr.addColorStop(0, 'rgba(255,247,208,' + a.toFixed(3) + ')');
+      gr.addColorStop(.28, 'rgba(255,239,190,' + (a * .70).toFixed(3) + ')');
+      gr.addColorStop(.62, 'rgba(255,231,170,' + (a * .30).toFixed(3) + ')');
       gr.addColorStop(1, 'rgba(255,226,160,0)');
       g.fillStyle = gr;
       g.beginPath(); g.arc(p.x, p.y, R, 0, TAU); g.fill();
-      g.fillStyle = 'rgba(255,252,232,' + Math.min(.95, a * 1.9).toFixed(3) + ')';
-      g.beginPath(); g.arc(p.x, p.y, 2.1, 0, TAU); g.fill();
+      g.fillStyle = 'rgba(255,253,236,' + Math.min(.96, a * 1.8).toFixed(3) + ')';
+      g.beginPath(); g.arc(p.x, p.y, 2.5, 0, TAU); g.fill();
       if(hot || open){
-        g.strokeStyle = 'rgba(255,241,193,' + (hot ? .34 : .26).toFixed(3) + ')';
+        g.strokeStyle = 'rgba(255,241,193,' + (hot ? .38 : .28).toFixed(3) + ')';
         g.lineWidth = .9;
         g.beginPath(); g.arc(p.x, p.y, R * .52, 0, TAU); g.stroke();
       }
@@ -6405,37 +6626,34 @@
     if(!hold && pointer.inCanvas){
       lastProgress = clamp(pointer.x / cssW, 0, 1);
     }
-    const maxCam = PANO_TRAVEL;
+    const maxCam = camMax();
     const targetCam = lastProgress * maxCam;
     if(!pointer.down){
-      const k = 1 - Math.pow(.44, dt);
-      camX += (targetCam - camX) * k;
+      const diff = targetCam - camX;
+      const stopAt = Math.max(1.2, cssW * .0022);
+      if(Math.abs(diff) <= stopAt){
+        camX = targetCam;
+        camVel = 0;
+      } else {
+        /* one even walk: a steady pace wherever the hand is, and the only
+           change of speed is the gentle ramp in and out at either end */
+        const want = Math.sign(diff) * Math.min(CAM_SLOW * cssW, Math.abs(diff) * 2.2);
+        const step = CAM_ACCEL * cssW * dt;
+        if(camVel < want) camVel = Math.min(want, camVel + step);
+        else if(camVel > want) camVel = Math.max(want, camVel - step);
+        camX += camVel * dt;
+        if((targetCam - camX) * diff <= 0){ camX = targetCam; camVel = 0; }
+      }
+    } else {
+      camVel = 0;
     }
     camX = clamp(camX, 0, maxCam);
-    scrollProgress = lastProgress;
-    seasonFloat = clamp(scrollProgress * 4 - .5, 0, 3);
+    scrollProgress = maxCam > 0 ? camX / maxCam : 0;
+    seasonFloat = clamp(camX / tileStep(), 0, SCROLL_TILES - 1);
 
     const dom = Math.round(seasonFloat);
     if(dom !== SEASON) applyDominantSeason(dom);
     if(seasonDotEl) seasonDotEl.style.left = (scrollProgress * 100).toFixed(2) + '%';
-  }
-
-  /* colour is revealed on the whole panorama, so a bloom on one half
-     leaves its mirrored twin on the other */
-  function drawRevealCopy(cv, alpha){
-    if(!cv || alpha <= 0 || cv.width <= 1) return;
-    ctx.globalAlpha = alpha;
-    if(camX < cssW - .5){
-      ctx.drawImage(cv, -camX, 0, cssW, cssH);
-    }
-    if(camX > .5){
-      ctx.save();
-      ctx.translate(PANO_SCREENS * cssW - camX, 0);
-      ctx.scale(-1, 1);
-      ctx.drawImage(cv, 0, 0, cssW, cssH);
-      ctx.restore();
-    }
-    ctx.globalAlpha = 1;
   }
 
   function render(now){
@@ -6463,49 +6681,36 @@
     updateSeasonFX(now, dt);
     updatePointerBees(now, dt);
 
-    if(plantLayerDirty){ redrawPlantLayer(now); revealDirty = true; }
+    const camMoved = Math.abs(camX - prevCamX) > .05;
+    prevCamX = camX;
 
-    const A = Math.floor(seasonFloat);
-    const B = Math.min(3, A + 1);
-    const mix = seasonFloat - A;
-    const needB = mix > .002 && B !== A;
-    if(revealSeasonA !== A || (needB && revealSeasonB !== B)) revealDirty = true;
-    if(maskDirty || revealDirty) recompositeReveals(A, B);
+    if(plantLayerDirty || camMoved) redrawPlantLayer(now);
+    if(maskDirty || revealDirty || camMoved) rebuildReveal();
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#e9ece3';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const sx = camX * plateScale;
-    const sw = cssW * plateScale;
-    const sh = cssH * plateScale;
-    const plateA = seasonPlates[A];
-    const plateB = seasonPlates[B];
-    if(plateA && sw > 0){
-      ctx.drawImage(plateA.greyPano, sx, 0, sw, sh, 0, 0, cssW, cssH);
-      if(needB && plateB){
-        ctx.globalAlpha = mix;
-        ctx.drawImage(plateB.greyPano, sx, 0, sw, sh, 0, 0, cssW, cssH);
-        ctx.globalAlpha = 1;
-      }
+    /* the grey stone of every stretch that touches the frame; drawn from
+       the east back, so each western stretch thins over its neighbour */
+    for(let t=SCROLL_TILES-1;t>=0;t--){
+      const dx = t*tileStep() - camX;
+      if(dx >= cssW || dx + cssW <= 0) continue;
+      const tile = scrollTiles[t];
+      if(!tile) continue;
+      ctx.globalAlpha = t < SCROLL_TILES - 1 ? endK() : 1;
+      ctx.drawImage(tile.grey, 0, 0, plateW, plateH, dx, 0, cssW, cssH);
+      ctx.globalAlpha = 1;
     }
-    drawRevealCopy(revealForSeason(A), needB ? 1 - mix : 1);
-    if(needB) drawRevealCopy(revealCanvasB, mix);
-
-    /* the copy that lies under the pointer carries the living things,
-       the other half only carries weather */
-    const activeCopy = 0;
-
-    for(let cp = 0; cp < PANO_SCREENS; cp++){
-      if(cp === 0 && camX >= cssW - .5) continue;
-      if(cp === 1 && camX <= .5) continue;
-      presentTransform(ctx, cp);
-      drawAnimatedMist(ctx, now);
-      drawSeasonFX(ctx, now);
+    /* colour, only where the pointer has been */
+    if(revealCanvas.width > 1){
+      ctx.drawImage(revealCanvas, 0, 0, plateW, plateH, 0, 0, cssW, cssH);
     }
 
-    presentTransform(ctx, activeCopy);
+    presentTransform(ctx);
+    drawAnimatedMist(ctx, now);
+    drawSeasonFX(ctx, now);
     drawRipples(ctx, now);
     drawSwarms(ctx, now);
     drawColony(ctx, now);
@@ -6544,27 +6749,28 @@
     canvas.style.height = cssH + 'px';
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
-    camX = clamp(lastProgress * PANO_TRAVEL, 0, PANO_TRAVEL);
+    camX = clamp(lastProgress * camMax(), 0, camMax());
+    camVel = 0;
     camY = 0;
   }
 
   function buildScroll(){
-    for(let s=0;s<4;s++) buildSeasonPlates(s);
-    SEASON = Math.round(seasonFloat);
+    buildScrollTiles();
+    SEASON = Math.round(clamp(seasonFloat, 0, 3));
     FOG = SEASON_FOG[SEASON].slice();
+    plantLayerDirty = true;
     redrawPlantLayer(performance.now());
-    revealSeasonA = -99;
-    revealSeasonB = -99;
     maskDirty = true;
     revealDirty = true;
+    rebuildReveal();
     updateSeasonUI();
   }
 
   function bootScroll(){
     layout();
-    camX = lastProgress * PANO_TRAVEL;
-    scrollProgress = lastProgress;
-    seasonFloat = clamp(scrollProgress * 4 - .5, 0, 3);
+    camX = lastProgress * camMax();
+    scrollProgress = camMax() > 0 ? camX / camMax() : 0;
+    seasonFloat = clamp(camX / tileStep(), 0, SCROLL_TILES - 1);
     requestAnimationFrame(() => requestAnimationFrame(() => {
       buildScroll();
       if(veilEl) veilEl.classList.add('hide');
@@ -6581,7 +6787,8 @@
       const oldW = cssW;
       layout();
       if(cssW !== oldW){
-        camX = clamp(lastProgress * PANO_TRAVEL, 0, PANO_TRAVEL);
+        camX = clamp(lastProgress * camMax(), 0, camMax());
+        seasonFloat = clamp(camX / tileStep(), 0, SCROLL_TILES - 1);
       }
       if(veilEl) veilEl.classList.remove('hide');
       setTimeout(() => {
@@ -6665,15 +6872,16 @@
   if(demoOn) setTimeout(bootDemo, 320);
 
   // expose a tiny hook for manual exploration
+  /* a small window onto the scroll, for checking it from outside */
   window.__qinling = {
-    spawn: (x,y,type,size) => spawnPlant(x,y,{type, size}),
-    reveal: (x,y,r) => { stampMask(x,y,r||140,1); revealDirty = true; },
-    season: (i) => setSeason(i),
     state: () => ({
       season: SEASON,
       seasonFloat: +seasonFloat.toFixed(3),
       progress: +scrollProgress.toFixed(3),
       camX: Math.round(camX),
+      camVel: Math.round(camVel),
+      ptr: [Math.round(ptrBee.x), Math.round(ptrBee.y)],
+      speed: Math.round(Math.sqrt(ptrBee.vx * ptrBee.vx + ptrBee.vy * ptrBee.vy)),
       bees: colony.slice(0, BEE_COUNT[SEASON]).map(b => [Math.round(b.x), Math.round(b.y)]),
       fx: seasonFX.length,
       counts: {...counts}
@@ -6682,10 +6890,7 @@
     shimmer: (i) => { const p = shimmerAt(i); return [Math.round(p.x), Math.round(p.y)]; },
     lens: () => ({ t:+lensT.toFixed(3), i:lensIdx, want:lensWant, r:Math.round(lensRadius()) }),
     vis: (i) => +shimmerVis(i).toFixed(3),
-    plates: () => detailPlates.map(p => p ? p.width : 0),
-    copy: (i) => STORY[i],
-    demo: bootDemo,
-    reset: () => resetEl.click()
+    copy: (i) => STORY[i]
   };
 })();
 </script>
